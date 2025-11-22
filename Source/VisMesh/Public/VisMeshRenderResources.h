@@ -185,21 +185,22 @@ private:
 };
 
 // 对应 LocalVertexFactory.ush 中的 Attributes 8-12
-struct FVisMeshInstanceData
+struct FInstancedVisMeshDataType
 {
-	// ATTRIBUTE8: Origin (xyz), Random (w)
-	FVector4f InstanceOrigin; 
-    
-	// ATTRIBUTE9: Transform Row 0 (xyz), HitProxy/Selected (w)
-	FVector4f InstanceTransform1; 
-    
-	// ATTRIBUTE10: Transform Row 1 (xyz), HitProxy (w)
-	FVector4f InstanceTransform2; 
-    
-	// ATTRIBUTE11: Transform Row 2 (xyz), HitProxy (w)
-	FVector4f InstanceTransform3; 
-    
-	// ATTRIBUTE12: Lightmap/Shadowmap UV Bias (xy, zw)
-	FVector4f InstanceLightmapAndShadowMapUVBias; 
+	/** The stream to read the mesh transform from. */
+	FVertexStreamComponent InstanceOriginComponent;
+
+	/** The stream to read the mesh transform from. */
+	FVertexStreamComponent InstanceTransformComponent[3];
+
+	/** The stream to read the Lightmap Bias and Random instance ID from. */
+	FVertexStreamComponent InstanceLightmapAndShadowMapUVBiasComponent;
+
+	FRHIShaderResourceView* InstanceOriginSRV = nullptr;
+	FRHIShaderResourceView* InstanceTransformSRV = nullptr;
+	FRHIShaderResourceView* InstanceLightmapSRV = nullptr;
+	FRHIShaderResourceView* InstanceCustomDataSRV = nullptr;
+
+	int32 NumCustomDataFloats = 0;
 };
 
