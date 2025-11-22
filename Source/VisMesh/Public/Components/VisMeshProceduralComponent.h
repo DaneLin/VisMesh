@@ -3,8 +3,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "VisMeshComponentBase.h"
-#include "VisMeshRenderResources.h"
+#include "RenderBase/VisMeshComponentBase.h"
+#include "RenderBase/VisMeshRenderResources.h"
 #include "Components/MeshComponent.h"
 
 #include "VisMeshProceduralComponent.generated.h"
@@ -229,6 +229,6 @@ private:
 	UPROPERTY(transient)
 	TArray<TObjectPtr<UBodySetup>> AsyncBodySetupQueue;
 
-	friend class FVisMeshSceneProxy;
+	friend class FVisMeshProceduralSceneProxy;
 	friend class FVisMeshInstancedSceneProxy;
 };

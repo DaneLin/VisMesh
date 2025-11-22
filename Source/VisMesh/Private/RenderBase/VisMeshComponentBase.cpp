@@ -1,6 +1,6 @@
-#include "VisMeshComponentBase.h"
+#include "RenderBase/VisMeshComponentBase.h"
 
-#include "VisMeshSubsystem.h"
+#include "RenderBase/VisMeshSubsystem.h"
 
 UVisMeshComponentBase::UVisMeshComponentBase(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)

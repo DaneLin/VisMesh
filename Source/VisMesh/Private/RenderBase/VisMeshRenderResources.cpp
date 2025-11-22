@@ -1,6 +1,4 @@
-#include "VisMeshRenderResources.h"
-
-#include "VisMeshSubsystem.h"
+#include "RenderBase/VisMeshRenderResources.h"
 
 const TCHAR* FPositionUAVVertexBuffer::GetName() const
 {

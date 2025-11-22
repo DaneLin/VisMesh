@@ -1,4 +1,4 @@
-#include "VisMeshInstancedVertexFactory.h"
+#include "RenderBase/VisMeshInstancedVertexFactory.h"
 
 #include "DataDrivenShaderPlatformInfo.h"
 #include "MeshDrawShaderBindings.h"

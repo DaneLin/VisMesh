@@ -1,9 +1,9 @@
-#include "VisMeshUtils.h"
+#include "Utils/VisMeshUtils.h"
 
 #include "RenderGraphBuilder.h"
 #include "RenderGraphEvent.h"
 #include "RenderGraphUtils.h"
-#include "VisMeshDispatchShaders.h"
+#include "RenderBase/VisMeshDispatchShaders.h"
 
 DECLARE_GPU_DRAWCALL_STAT(PopulateVertexPass);
 

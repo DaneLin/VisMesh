@@ -1,9 +1,10 @@
 // Copyright ZJU CAD. All Rights Reserved.
 
-#include "VisMeshProceduralComponent.h"
+#include "Components/VisMeshProceduralComponent.h"
 
-#include "VisMeshRenderResources.h"
-#include "VisMeshSceneProxy.h"
+#include "Components/VisMeshProceduralSceneProxy.h"
+#include "RenderBase/VisMeshRenderResources.h"
+#include "RenderBase/VisMeshSceneProxyBase.h"
 #include "PhysicsEngine/BodySetup.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(VisMeshProceduralComponent)
@@ -223,7 +224,7 @@ void UVisMeshProceduralComponent::UpdateMeshSection(int32 SectionIndex, const TA
 				SectionData->NewVertexBuffer = Section.ProcVertexBuffer;
 
 				// // Enqueue command to send to render thread
-				FVisMeshSceneProxy* ProcMeshSceneProxy = (FVisMeshSceneProxy*)SceneProxy;
+				FVisMeshProceduralSceneProxy* ProcMeshSceneProxy = (FVisMeshProceduralSceneProxy*)SceneProxy;
 				ENQUEUE_RENDER_COMMAND(FVisMeshSectionUpdate)
 				([ProcMeshSceneProxy, SectionData](FRHICommandListImmediate& RHICmdList)
 				{
@@ -305,7 +306,7 @@ void UVisMeshProceduralComponent::SetMeshSectionVisible(int32 SectionIndex, bool
 		if (SceneProxy)
 		{
 			// Enqueue command to modify render thread info
-			FVisMeshSceneProxy* ProcMeshSceneProxy = (FVisMeshSceneProxy*)SceneProxy;
+			FVisMeshProceduralSceneProxy* ProcMeshSceneProxy = (FVisMeshProceduralSceneProxy*)SceneProxy;
 			ENQUEUE_RENDER_COMMAND(FProcMeshSectionVisibilityUpdate)(
 				[ProcMeshSceneProxy, SectionIndex, bNewVisibility](FRHICommandListImmediate& RHICmdList)
 				{
@@ -428,7 +429,7 @@ FPrimitiveSceneProxy* UVisMeshProceduralComponent::CreateSceneProxy()
 {
 	SCOPE_CYCLE_COUNTER(STAT_VisMesh_CreateSceneProxy);
 	
-	return new FVisMeshSceneProxy(this);
+	return new FVisMeshProceduralSceneProxy(this);
 }
 
 class UBodySetup* UVisMeshProceduralComponent::GetBodySetup()

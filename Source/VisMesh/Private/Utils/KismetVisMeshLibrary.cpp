@@ -1,17 +1,17 @@
 ﻿// Fill out your copyright notice in the Description page of Project Settings.
 
-#include "KismetVisMeshLibrary.h"
+#include "Utils/KismetVisMeshLibrary.h"
 
 #include "GeomTools.h"
 #include "StaticMeshResources.h"
-#include "VisMeshProceduralComponent.h"
-#include "VisMeshRenderResources.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/VisMeshProceduralComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Logging/MessageLog.h"
 #include "Materials/MaterialInterface.h"
 #include "Misc/UObjectToken.h"
 #include "PhysicsEngine/BodySetup.h"
+#include "RenderBase/VisMeshRenderResources.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(KismetVisMeshLibrary)
 

@@ -1,8 +1,8 @@
-#include "VisMeshSceneViewExtension.h"
+#include "RenderBase/VisMeshSceneViewExtension.h"
 
-#include "VisMeshComponentBase.h"
-#include "VisMeshSceneProxy.h"
-#include "VisMeshSubsystem.h"
+#include "RenderBase/VisMeshComponentBase.h"
+#include "RenderBase/VisMeshSceneProxyBase.h"
+#include "RenderBase/VisMeshSubsystem.h"
 
 
 FIndirectPopulateSceneViewExtension::FIndirectPopulateSceneViewExtension(const FAutoRegister& AutoReg, UWorld* InWorld,UVisMeshSubsystem* System)
@@ -29,8 +29,8 @@ void FIndirectPopulateSceneViewExtension::PreRenderViewFamily_RenderThread(FRDGB
 		
 		if (Comp && Comp->SceneProxy)
 		{
-			// 这里我们假设：注册到 OwnerSystem 的组件，其 Proxy 一定是 FVisMeshBaseSceneProxy 的子类
-			FVisMeshBaseSceneProxy* ComputeProxy = static_cast<FVisMeshBaseSceneProxy*>(Comp->SceneProxy);
+			// 这里我们假设：注册到 OwnerSystem 的组件，其 Proxy 一定是 FVisMeshSceneProxyBase 的子类
+			FVisMeshSceneProxyBase* ComputeProxy = static_cast<FVisMeshSceneProxyBase*>(Comp->SceneProxy);
             
 			if (ComputeProxy)
 			{

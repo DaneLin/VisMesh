@@ -1,6 +1,6 @@
 #pragma once
 
-#include "VisMeshRenderResources.h"
+#include "RenderBase/VisMeshRenderResources.h"
 
 static constexpr int32 GNumVertsPerBox = 36;
 
