@@ -1,0 +1,9 @@
+// 每个立方体需要的顶点数: 6个面 * 2个三角形 * 3个顶点 = 36
+#define VERTS_PER_BOX_INSTANCE 36
+
+void WriteVertex(RWBuffer<float> OutInstanceVertices, uint StartOffset, uint VIdx, float3 Pos)
+{
+	OutInstanceVertices[StartOffset + (VIdx) * 3 + 0] = Pos.x;
+	OutInstanceVertices[StartOffset + (VIdx) * 3 + 1] = Pos.y;
+	OutInstanceVertices[StartOffset + (VIdx) * 3 + 2] = Pos.z;
+}

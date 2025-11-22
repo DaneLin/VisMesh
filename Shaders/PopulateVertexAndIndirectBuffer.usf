@@ -1,0 +1,122 @@
+/*=============================================================================
+    PopulateVertexAndIndirectBuffer.usf
+    生成柱状图几何体 (Procedural Geometry Mode)
+=============================================================================*/
+
+#include "/Engine/Private/Common.ush"
+#include "VisMeshDrawCommon.ush"
+
+// -----------------------------------------------------------------------------
+// Shader Parameters
+// -----------------------------------------------------------------------------
+float XSpace; // X轴 间距
+float YSpace; // Y轴 间距
+int NumColumns; // 每行有多少列
+int NumInstances; // 总生成的柱子数量
+float Time; // 时间 (用于高度动画)
+
+
+// 输出：扁平化的顶点位置缓冲区 [x,y,z, x,y,z, ...]
+RWBuffer<float> OutInstanceVertices;
+// 输出：间接绘制参数 [VertexCount, InstanceCount, StartVertex, StartInstance]
+RWBuffer<uint> OutIndirectArgs;
+
+#define WIDTH 50.0f  // 直接使用固定宽度
+
+[numthreads(THREAD_COUNT, 1, 1)]
+void MainCS(uint TaskIndex : SV_DispatchThreadID)
+{
+	// 越界检查
+	if (TaskIndex >= (uint)NumInstances)
+	{
+		return;
+	}
+
+	uint Row = TaskIndex / NumColumns;
+	uint Col = TaskIndex % NumColumns;
+	
+	float3 BasePos = float3(Col * XSpace, Row * YSpace, 0.0f);
+
+	// 计算动态高度 (示例动画逻辑)
+	float2 GridCenter = float2(NumColumns * 0.5f, NumInstances / NumColumns * 0.5f);
+	float Dist = distance(float2(Col, Row), GridCenter);
+	float Wave = sin(Dist * 0.1f - Time * 2.0f) * 0.5f + 0.5f;
+	float BarHeight = Wave * 500.0f + 20.0f;
+
+	// 立方体几何体 (Generate Geometry)
+	uint StartOffset = TaskIndex * VERTS_PER_BOX_INSTANCE * 3;
+
+	// 定义 8 个角点
+	float X0 = BasePos.x; // 使用固定宽度
+	float X1 = BasePos.x + WIDTH; // 使用固定宽度
+	float Y0 = BasePos.y; // 使用固定宽度
+	float Y1 = BasePos.y + WIDTH; // 使用固定宽度
+	float Z0 = 0.0f;
+	float Z1 = BarHeight;
+	
+	float3 p0 = float3(X0, Y0, Z0);	// p0: Bottom-Left-Front
+	float3 p1 = float3(X1, Y0, Z0);	// p1: Bottom-Right-Front
+	float3 p2 = float3(X1, Y1, Z0);	// p2: Bottom-Right-Back
+	float3 p3 = float3(X0, Y1, Z0);	// p3: Bottom-Left-Back
+	float3 p4 = float3(X0, Y0, Z1);	// p4: Top-Left-Front
+	float3 p5 = float3(X1, Y0, Z1);	// p5: Top-Right-Front
+	float3 p6 = float3(X1, Y1, Z1);	// p6: Top-Right-Back
+	float3 p7 = float3(X0, Y1, Z1);	// p7: Top-Left-Back
+
+	
+	// ---------------------------------------------------------------------
+	// 所有面均使用 逆时针 (CCW) 顺序写入，以避免被 CM_CW 剔除
+	// ---------------------------------------------------------------------
+	int v = 0;
+	WriteVertex(OutInstanceVertices, StartOffset, v++, p1);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p5);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p0);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p0);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p5);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p4);
+
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p2);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p3);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p7);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p2);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p7);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p6);
+
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p3);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p0);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p4);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p3);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p4);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p7);
+
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p1);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p2);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p6);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p1);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p6);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p5);
+
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p4);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p5);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p6);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p4);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p6);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p7);
+
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p3);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p2);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p1);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p3);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p1);
+    WriteVertex(OutInstanceVertices, StartOffset, v++, p0);
+
+
+	// 写入 Indirect Arguments
+	if (TaskIndex == 0)
+	{
+		OutIndirectArgs[0] = NumInstances * VERTS_PER_BOX_INSTANCE;
+		OutIndirectArgs[1] = 1;
+		OutIndirectArgs[2] = 0;
+		OutIndirectArgs[3] = 0;
+	}
+}
