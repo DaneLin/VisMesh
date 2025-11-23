@@ -32,10 +32,11 @@ void UVisMeshIndirectComponent::GetUsedMaterials(TArray<UMaterialInterface*>& Ou
 		OutMaterials.Add(Material);
 	}
 }
-
+#if WITH_EDITOR
 void UVisMeshIndirectComponent::PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent)
 {
 	Super::PostEditChangeProperty(PropertyChangedEvent);
 
 	MarkRenderStateDirty();
 }
+#endif

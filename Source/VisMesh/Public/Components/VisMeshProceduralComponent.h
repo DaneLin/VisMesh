@@ -171,9 +171,10 @@ public:
 
 	/** Replace a section with new section geometry */
 	void SetVisMeshSection(int32 SectionIndex, const FVisMeshSection& Section);
-
+#if WITH_EDITOR
 	virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;
-
+#endif
+	
 	//~ Begin UPrimitiveComponent Interface.
 	virtual FPrimitiveSceneProxy* CreateSceneProxy() override;
 	virtual class UBodySetup* GetBodySetup() override;

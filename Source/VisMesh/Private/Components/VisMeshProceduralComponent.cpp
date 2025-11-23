@@ -409,7 +409,7 @@ void UVisMeshProceduralComponent::SetVisMeshSection(int32 SectionIndex, const FV
 	UpdateCollision(); // Mark collision as dirty
 	MarkRenderStateDirty(); // New section requires recreating scene proxy
 }
-
+#if WITH_EDITOR
 void UVisMeshProceduralComponent::PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent)
 {
 	Super::PostEditChangeProperty(PropertyChangedEvent);
@@ -424,6 +424,7 @@ void UVisMeshProceduralComponent::PostEditChangeProperty(struct FPropertyChanged
 		MarkRenderStateDirty();
 	}
 }
+#endif
 
 FPrimitiveSceneProxy* UVisMeshProceduralComponent::CreateSceneProxy()
 {

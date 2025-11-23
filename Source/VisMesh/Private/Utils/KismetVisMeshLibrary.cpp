@@ -103,7 +103,7 @@ void UKismetVisMeshLibrary::GenerateBoxMesh(FVector BoxRadius, TArray<FVector>& 
 	UVs[3] = UVs[7] = UVs[11] = UVs[15] = UVs[19] = UVs[23] = FVector2D(1.f, 0.f);
 }
 
-void FindVertOverlaps(int32 TestVertIndex, const TArray<FVector>& Verts, TArray<int32>& VertOverlaps)
+void VisMeshFindVertOverlaps(int32 TestVertIndex, const TArray<FVector>& Verts, TArray<int32>& VertOverlaps)
 {
 	// Check if Verts is empty or test is outside range
 	if (TestVertIndex < Verts.Num())
@@ -162,7 +162,7 @@ void UKismetVisMeshLibrary::CalculateTangentsForMesh(const TArray<FVector>& Vert
 
 			// Find/add this vert to index buffer
 			TArray<int32> VertOverlaps;
-			FindVertOverlaps(VertIndex, Vertices, VertOverlaps);
+			VisMeshFindVertOverlaps(VertIndex, Vertices, VertOverlaps);
 
 			// Remember which triangles map to this vert
 			VertToTriMap.AddUnique(VertIndex, TriIdx);
@@ -587,7 +587,7 @@ void UKismetVisMeshLibrary::GetSectionFromVisMesh(UVisMeshProceduralComponent* I
 //////////////////////////////////////////////////////////////////////////
 
 /** Util that returns 1 ir on positive side of plane, -1 if negative, or 0 if split by plane */
-int32 BoxPlaneCompare(FBox InBox, const FPlane& InPlane)
+int32 VisMeshBoxPlaneCompare(FBox InBox, const FPlane& InPlane)
 {
 	FVector BoxCenter, BoxExtents;
 	InBox.GetCenterAndExtents(BoxCenter, BoxExtents);
@@ -613,7 +613,7 @@ int32 BoxPlaneCompare(FBox InBox, const FPlane& InPlane)
 }
 
 /** Take two static mesh verts and interpolate all values between them */
-FVisMeshVertex InterpolateVert(const FVisMeshVertex& V0, const FVisMeshVertex& V1, float Alpha)
+FVisMeshVertex VisMeshInterpolateVert(const FVisMeshVertex& V0, const FVisMeshVertex& V1, float Alpha)
 {
 	FVisMeshVertex Result;
 
@@ -642,7 +642,7 @@ FVisMeshVertex InterpolateVert(const FVisMeshVertex& V0, const FVisMeshVertex& V
 }
 
 /** Transform triangle from 2D to 3D static-mesh triangle. */
-void Transform2DPolygonTo3D(const FUtilPoly2D& InPoly, const FMatrix& InMatrix, TArray<FVisMeshVertex>& OutVerts, FBox& OutBox)
+void VisMeshTransform2DPolygonTo3D(const FUtilPoly2D& InPoly, const FMatrix& InMatrix, TArray<FVisMeshVertex>& OutVerts, FBox& OutBox)
 {
 	FVector3f PolyNormal = (FVector3f)-InMatrix.GetUnitAxis(EAxis::Z);
 	FVisMeshTangent PolyTangent(InMatrix.GetUnitAxis(EAxis::X), false);
@@ -667,7 +667,7 @@ void Transform2DPolygonTo3D(const FUtilPoly2D& InPoly, const FMatrix& InMatrix, 
 }
 
 /** Given a polygon, decompose into triangles. */
-bool TriangulatePoly(TArray<uint32>& OutTris, const TArray<FVisMeshVertex>& PolyVerts, int32 VertBase, const FVector3f& PolyNormal)
+bool VisMeshTriangulatePoly(TArray<uint32>& OutTris, const TArray<FVisMeshVertex>& PolyVerts, int32 VertBase, const FVector3f& PolyNormal)
 {
 	// Can't work if not enough verts for 1 triangle
 	int32 NumVerts = PolyVerts.Num() - VertBase;
@@ -760,7 +760,7 @@ bool TriangulatePoly(TArray<uint32>& OutTris, const TArray<FVisMeshVertex>& Poly
 }
 
 /** Util to slice a convex hull with a plane */
-void SliceConvexElem(const FKConvexElem& InConvex, const FPlane& SlicePlane, TArray<FVector>& OutConvexVerts)
+void VisMeshSliceConvexElem(const FKConvexElem& InConvex, const FPlane& SlicePlane, TArray<FVector>& OutConvexVerts)
 {
 	// Get set of planes that make up hull
 	TArray<FPlane> ConvexPlanes;
@@ -808,7 +808,7 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 			if (BaseSection != nullptr && BaseSection->ProcIndexBuffer.Num() > 0 && BaseSection->ProcVertexBuffer.Num() > 0)
 			{
 				// Compare bounding box of section with slicing plane
-				int32 BoxCompare = BoxPlaneCompare(BaseSection->SectionLocalBox, SlicePlane);
+				int32 BoxCompare = VisMeshBoxPlaneCompare(BaseSection->SectionLocalBox, SlicePlane);
 
 				// Box totally clipped, clear section
 				if (BoxCompare == -1)
@@ -964,7 +964,7 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 									// Find distance along edge that plane is
 									float Alpha = -PlaneDist[ThisVert] / (PlaneDist[NextVert] - PlaneDist[ThisVert]);
 									// Interpolate vertex params to that point
-									FVisMeshVertex InterpVert = InterpolateVert(BaseSection->ProcVertexBuffer[BaseV[ThisVert]], BaseSection->ProcVertexBuffer[BaseV[NextVert]], FMath::Clamp(Alpha, 0.0f, 1.0f));
+									FVisMeshVertex InterpVert = VisMeshInterpolateVert(BaseSection->ProcVertexBuffer[BaseV[ThisVert]], BaseSection->ProcVertexBuffer[BaseV[NextVert]], FMath::Clamp(Alpha, 0.0f, 1.0f));
 
 									// Add to vertex buffer
 									int32 InterpVertIndex = NewSection.ProcVertexBuffer.Add(InterpVert);
@@ -1089,10 +1089,10 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 				int32 PolyVertBase = CapSection.ProcVertexBuffer.Num();
 
 				// Transform from 2D poly verts to 3D
-				Transform2DPolygonTo3D(PolySet.Polys[PolyIdx], PolySet.PolyToWorld, CapSection.ProcVertexBuffer, CapSection.SectionLocalBox);
+				VisMeshTransform2DPolygonTo3D(PolySet.Polys[PolyIdx], PolySet.PolyToWorld, CapSection.ProcVertexBuffer, CapSection.SectionLocalBox);
 
 				// Triangulate this polygon
-				TriangulatePoly(CapSection.ProcIndexBuffer, CapSection.ProcVertexBuffer, PolyVertBase, (FVector3f)LocalPlaneNormal);
+				VisMeshTriangulatePoly(CapSection.ProcIndexBuffer, CapSection.ProcVertexBuffer, PolyVertBase, (FVector3f)LocalPlaneNormal);
 			}
 
 			// Set geom for cap section
@@ -1158,7 +1158,7 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 		{
 			FKConvexElem& BaseConvex = ProcMeshBodySetup->AggGeom.ConvexElems[ConvexIndex];
 
-			int32 BoxCompare = BoxPlaneCompare(BaseConvex.ElemBox, SlicePlane);
+			int32 BoxCompare = VisMeshBoxPlaneCompare(BaseConvex.ElemBox, SlicePlane);
 
 			// If box totally clipped, add to other half (if desired)
 			if (BoxCompare == -1)
@@ -1177,7 +1177,7 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 			else
 			{
 				TArray<FVector> SlicedConvexVerts;
-				SliceConvexElem(BaseConvex, SlicePlane, SlicedConvexVerts);
+				VisMeshSliceConvexElem(BaseConvex, SlicePlane, SlicedConvexVerts);
 				// If we got something valid, add it
 				if (SlicedConvexVerts.Num() >= 4)
 				{
@@ -1188,7 +1188,7 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 				if (bCreateOtherHalf)
 				{
 					TArray<FVector> OtherSlicedConvexVerts;
-					SliceConvexElem(BaseConvex, SlicePlane.Flip(), OtherSlicedConvexVerts);
+					VisMeshSliceConvexElem(BaseConvex, SlicePlane.Flip(), OtherSlicedConvexVerts);
 					if (OtherSlicedConvexVerts.Num() >= 4)
 					{
 						OtherSlicedCollision.Add(OtherSlicedConvexVerts);
