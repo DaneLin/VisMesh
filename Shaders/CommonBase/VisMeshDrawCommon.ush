@@ -7,3 +7,61 @@ void WriteVertex(RWBuffer<float> OutInstanceVertices, uint StartOffset, uint VId
 	OutInstanceVertices[StartOffset + (VIdx) * 3 + 1] = Pos.y;
 	OutInstanceVertices[StartOffset + (VIdx) * 3 + 2] = Pos.z;
 }
+
+/**
+ * 生成面朝相机的带宽度线段 (Billboard Line)
+ * * @param OutBuffer      输出顶点缓冲区
+ * @param StartOffset    当前Instance在缓冲区中的起始偏移
+ * @param v              [inout] 当前顶点的计数器引用 (会自动累加)
+ * @param StartPos       线段起点 (World Space)
+ * @param EndPos         线段终点 (World Space)
+ * @param Width          线宽
+ * @param CameraPos      相机位置 (用于确保面片始终朝向观察者)
+ */
+void AppendLineSegment(RWBuffer<float> OutBuffer, uint StartOffset, inout int v, float3 StartPos, float3 EndPos, float Width, float3 CameraPos)
+{
+	float3 LineDir = EndPos - StartPos;
+	float Len = length(LineDir);
+    
+	// 防止生成长度为0的线段导致计算错误
+	if (Len < 0.0001f) return;
+    
+	LineDir /= Len; // Normalize
+
+	// 1. 计算从线段指向相机的向量
+	float3 ToCamera = normalize(CameraPos - (StartPos + EndPos) * 0.5f);
+
+	// 2. 计算“右向量”：垂直于线段方向 且 垂直于观察方向
+	float3 Right = cross(ToCamera,LineDir);
+    
+	// 如果线段正好指向相机（平行），使用默认上向量防止消失
+	if (length(Right) < 0.0001f)
+	{
+		Right = float3(0, 0, 1); 
+	}
+	else
+	{
+		Right = normalize(Right);
+	}
+
+	// 3. 计算偏移量 (线宽的一半)
+	float3 OffsetVec = Right * (Width * 0.5f);
+
+	// 4. 计算四个角点
+	// p0: 起点左侧, p1: 起点右侧, p2: 终点右侧, p3: 终点左侧
+	float3 p0 = StartPos - OffsetVec;
+	float3 p1 = StartPos + OffsetVec;
+	float3 p2 = EndPos + OffsetVec;
+	float3 p3 = EndPos - OffsetVec;
+
+	// 5. 写入两个三角形 (逆时针 CCW)
+	// Triangle 1: p0 -> p1 -> p2
+	WriteVertex(OutBuffer, StartOffset, v++, p0);
+	WriteVertex(OutBuffer, StartOffset, v++, p1);
+	WriteVertex(OutBuffer, StartOffset, v++, p2);
+
+	// Triangle 2: p0 -> p2 -> p3
+	WriteVertex(OutBuffer, StartOffset, v++, p0);
+	WriteVertex(OutBuffer, StartOffset, v++, p2);
+	WriteVertex(OutBuffer, StartOffset, v++, p3);
+}

@@ -1,0 +1,102 @@
+/*=============================================================================
+    PopulateBoxWireframeBuffer.usf
+    生成柱体边线轮廓 (Wireframe Generation)
+=============================================================================*/
+
+#include "/Engine/Private/Common.ush"
+#include "../CommonBase/VisMeshDrawCommon.ush" 
+
+// -----------------------------------------------------------------------------
+// Shader Parameters
+// -----------------------------------------------------------------------------
+float XSpace;       // X轴 间距
+float YSpace;       // Y轴 间距
+int NumColumns;     // 每行有多少列
+int NumInstances;   // 总生成的柱子数量
+float LineWidth;
+float4 CameraPos;
+float Time;         // 时间 (用于高度动画)
+
+// 输出：改为顶点缓冲区 (存储扁平化的 float: x,y,z, x,y,z...)
+RWBuffer<float> OutInstanceVertices; 
+// 输出：间接绘制参数
+RWBuffer<uint> OutIndirectArgs;
+
+#define WIDTH 50.0f
+// 每个立方体有 12 条边，每条边是一个公告板(2个三角形=6个顶点)
+// 总顶点数 = 12 * 6 = 72
+#define VERTS_PER_WIRE_BOX 72 
+
+[numthreads(THREAD_COUNT, 1, 1)]
+void MainCS(uint TaskIndex : SV_DispatchThreadID)
+{
+    // 越界检查
+    if (TaskIndex >= (uint)NumInstances)
+    {
+        return;
+    }
+
+    // 1. 计算位置 (Translation)
+    uint Row = TaskIndex / NumColumns;
+    uint Col = TaskIndex % NumColumns;
+    
+    // 2. 计算高度动画
+    float2 GridCenter = float2(NumColumns * 0.5f, NumInstances / NumColumns * 0.5f);
+    float Dist = distance(float2(Col, Row), GridCenter);
+    float Wave = sin(Dist * 0.1f - Time * 2.0f) * 0.5f + 0.5f;
+    float BarHeight = Wave * 500.0f + 20.0f;
+
+    // 3. 计算 8 个角点
+    float3 BasePos = float3(Col * XSpace, Row * YSpace, 0.0f);
+    
+    float X0 = BasePos.x;
+    float X1 = BasePos.x + WIDTH;
+    float Y0 = BasePos.y;
+    float Y1 = BasePos.y + WIDTH;
+    float Z0 = 0.0f;
+    float Z1 = BarHeight;
+
+    float3 p0 = float3(X0, Y0, Z0); // Bottom-Left-Front
+    float3 p1 = float3(X1, Y0, Z0); // Bottom-Right-Front
+    float3 p2 = float3(X1, Y1, Z0); // Bottom-Right-Back
+    float3 p3 = float3(X0, Y1, Z0); // Bottom-Left-Back
+    
+    float3 p4 = float3(X0, Y0, Z1); // Top-Left-Front
+    float3 p5 = float3(X1, Y0, Z1); // Top-Right-Front
+    float3 p6 = float3(X1, Y1, Z1); // Top-Right-Back
+    float3 p7 = float3(X0, Y1, Z1); // Top-Left-Back
+
+    // 4. 绘制 12 条边
+    // 计算在 Buffer 中的写入起始位置
+    // 每个 Instance 占用 VERTS_PER_WIRE_BOX 个顶点，每个顶点 3 个 float
+    uint StartOffset = TaskIndex * VERTS_PER_WIRE_BOX * 3;
+    int v = 0; // 局部顶点计数器
+    // 底部矩形 (Bottom Loop)
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p0, p1, LineWidth, CameraPos.xyz);
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p1, p2, LineWidth, CameraPos.xyz);
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p2, p3, LineWidth, CameraPos.xyz);
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p3, p0, LineWidth, CameraPos.xyz);
+
+    // 顶部矩形 (Top Loop)
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p4, p5, LineWidth, CameraPos.xyz);
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p5, p6, LineWidth, CameraPos.xyz);
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p6, p7, LineWidth, CameraPos.xyz);
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p7, p4, LineWidth, CameraPos.xyz);
+
+    // 垂直棱 (Vertical Pillars)
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p0, p4, LineWidth, CameraPos.xyz);
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p1, p5, LineWidth, CameraPos.xyz);
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p2, p6, LineWidth, CameraPos.xyz);
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p3, p7, LineWidth, CameraPos.xyz);
+
+    // 5. 写入 Indirect Arguments (仅需由第0个线程写入一次)
+    if (TaskIndex == 0)
+    {
+        // 此时我们不再使用 Instanced Draw (InstanceCount = 1)
+        // 而是绘制所有生成的顶点 (VertexCount = NumInstances * 72)
+        OutIndirectArgs[0] = NumInstances * VERTS_PER_WIRE_BOX; // VertexCount
+        OutIndirectArgs[1] = 1;                                 // InstanceCount
+        OutIndirectArgs[2] = 0;                                 // StartVertexLocation
+        OutIndirectArgs[3] = 0;                                 // StartInstanceLocation
+    }
+}
