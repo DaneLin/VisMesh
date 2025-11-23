@@ -37,6 +37,7 @@ public:
 	static constexpr uint32 ThreadGroupSize = 256;
 	
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, VISMESH_API)
+		SHADER_PARAMETER_UAV(RWBuffer<float4>, OutInstanceOriginBuffer)
 		SHADER_PARAMETER_UAV(RWBuffer<float4>, OutInstanceTransforms)
 		SHADER_PARAMETER_UAV(RWBuffer<uint>, OutIndirectArgs)
 

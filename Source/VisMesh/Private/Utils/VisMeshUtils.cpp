@@ -43,7 +43,7 @@ void ConvertProcMeshToDynMeshVertex(FDynamicMeshVertex& Vert, const FVisMeshVert
 	Vert.TangentZ.Vector.W = ProcVert.Tangent.bFlipTangentY ? -127 : 127;
 }
 
-void AddBoxChartInstancingPass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* InstanceTransformsUAV,
+void AddBoxChartInstancingPass(FRDGBuilder& GraphBuilder,FRHIUnorderedAccessView* InstanceOriginBuffersUAV, FRHIUnorderedAccessView* InstanceTransformsUAV,
 	FRHIUnorderedAccessView* IndirectArgsBufferUAV, float InXSpace, float InYSpace, int32 InNumColumns,
 	int32 InNumInstances, float InTime)
 {
@@ -53,11 +53,9 @@ void AddBoxChartInstancingPass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessVie
 	TShaderMapRef<FPopulateBoxChartInstanceBufferCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
 
 	FPopulateBoxChartInstanceBufferCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FPopulateBoxChartInstanceBufferCS::FParameters>();
-    
-	// [修改] 绑定 Instance Transform UAV
+    PassParameters->OutInstanceOriginBuffer = InstanceOriginBuffersUAV;
 	PassParameters->OutInstanceTransforms = InstanceTransformsUAV;
 	PassParameters->OutIndirectArgs = IndirectArgsBufferUAV;
-    
 	PassParameters->XSpace = InXSpace;
 	PassParameters->YSpace = InYSpace;
 	PassParameters->NumColumns = InNumColumns;

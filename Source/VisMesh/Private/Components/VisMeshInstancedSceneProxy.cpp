@@ -36,7 +36,7 @@ FPrimitiveViewRelevance FVisMeshInstancedSceneProxy::GetViewRelevance(const FSce
 {
 	FPrimitiveViewRelevance Result;
 	Result.bDrawRelevance = IsShown(View);
-	Result.bShadowRelevance = IsShadowCast(View);
+	Result.bShadowRelevance = false;
 	Result.bDynamicRelevance = true;
 	Result.bStaticRelevance = false;
 	Result.bRenderInMainPass = ShouldRenderInMainPass();
@@ -89,12 +89,9 @@ void FVisMeshInstancedSceneProxy::CreateRenderThreadResources()
 		NewData.PositionComponentSRV = PositionBuffer->GetSRV();
 	}
 
-	NewData.ColorComponent = FVertexStreamComponent(&GNullColorVertexBuffer, 0, 0, VET_Color,
-	                                                EVertexStreamUsage::ManualFetch);
-	NewData.TangentBasisComponents[0] = FVertexStreamComponent(&GNullColorVertexBuffer, 0, 0, VET_PackedNormal,
-	                                                           EVertexStreamUsage::ManualFetch);
-	NewData.TangentBasisComponents[1] = FVertexStreamComponent(&GNullColorVertexBuffer, 0, 0, VET_PackedNormal,
-	                                                           EVertexStreamUsage::ManualFetch);
+	NewData.ColorComponent = FVertexStreamComponent(&GNullColorVertexBuffer, 0, 0, VET_Color,EVertexStreamUsage::ManualFetch);
+	NewData.TangentBasisComponents[0] = FVertexStreamComponent(&GNullColorVertexBuffer, 0, 0, VET_PackedNormal,EVertexStreamUsage::ManualFetch);
+	NewData.TangentBasisComponents[1] = FVertexStreamComponent(&GNullColorVertexBuffer, 0, 0, VET_PackedNormal,EVertexStreamUsage::ManualFetch);
 
 	if (RHISupportsManualVertexFetch(GMaxRHIShaderPlatform))
 	{
@@ -216,7 +213,8 @@ void FVisMeshInstancedSceneProxy::DispatchComputePass_RenderThread(FRDGBuilder& 
 
 		// 调用具体的 Pass 添加函数 (这个函数可以是静态的，或者 VisMeshUtils 里的)
 		AddBoxChartInstancingPass(GraphBuilder,
-		                          InstanceBuffer->GetTransformUAV(), // [修改] 传入 Instance Buffer UAV
+									InstanceBuffer->GetOriginUAV(),
+		                          InstanceBuffer->GetTransformUAV(), // 传入 Instance Buffer UAV
 		                          IndirectArgsBufferUAV,
 		                          XSpace, YSpace, NumColumns, NumInstances, CurrentTime
 		);

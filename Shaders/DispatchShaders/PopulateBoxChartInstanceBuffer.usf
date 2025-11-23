@@ -14,12 +14,9 @@ int NumColumns;     // 每行有多少列
 int NumInstances;   // 总生成的柱子数量
 float Time;         // 时间 (用于高度动画)
 
-// [修改] 输出：Instance 变换矩阵 Buffer (每实例 3 个 float4)
-// 对应 C++ 端的 FVisMeshInstanceBuffer UAV
-RWBuffer<float4> OutInstanceTransforms;
-
-// 输出：间接绘制参数 [VertexCount, InstanceCount, StartVertex, StartInstance]
-RWBuffer<uint> OutIndirectArgs;
+RWBuffer<float4> OutInstanceOriginBuffer;   // 输出：Instance 位置 (xyz) + 额外数据 (w) 
+RWBuffer<float4> OutInstanceTransforms;     // 输出：Instance 变换矩阵 (每实例 3 个 float4) [cite: 4]
+RWBuffer<uint> OutIndirectArgs;             // 输出：间接绘制参数
 
 #define WIDTH 50.0f
 // 假设基础 Mesh 是一个 1x1x1 的单位立方体，这里定义基础缩放
@@ -58,10 +55,10 @@ void MainCS(uint TaskIndex : SV_DispatchThreadID)
     float ScaleZ = BarHeight;
 
     // 构建矩阵行 (UE Instance Transform 格式: AxisX_Tx, AxisY_Ty, AxisZ_Tz)
-    // 注意：这里的第四个分量是 Position
-    float4 TransformRow0 = float4(ScaleX, 0.0f, 0.0f, Position.x);
-    float4 TransformRow1 = float4(0.0f, ScaleY, 0.0f, Position.y);
-    float4 TransformRow2 = float4(0.0f, 0.0f, ScaleZ, Position.z);
+    OutInstanceOriginBuffer[TaskIndex] = float4(Position, 1.0f);
+    float4 TransformRow0 = float4(ScaleX, 0.0f, 0.0f, 0.0f);
+    float4 TransformRow1 = float4(0.0f, ScaleY, 0.0f, 0.0f);
+    float4 TransformRow2 = float4(0.0f, 0.0f, ScaleZ, 0.0f);
 
     // 4. 写入 Buffer
     // 每个 Instance 占用 3 个 float4

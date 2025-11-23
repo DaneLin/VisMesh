@@ -15,6 +15,7 @@ static void AddPopulateVertexPass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccess
 static void ConvertProcMeshToDynMeshVertex(FDynamicMeshVertex& Vert, const FVisMeshVertex& ProcVert);
 
 static void AddBoxChartInstancingPass(FRDGBuilder& GraphBuilder,
+                                      FRHIUnorderedAccessView* InstanceOriginBuffersUAV,
                                       FRHIUnorderedAccessView* InstanceTransformsUAV,
                                       FRHIUnorderedAccessView* IndirectArgsBufferUAV,
                                       float InXSpace, float InYSpace,

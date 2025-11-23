@@ -18,9 +18,11 @@ IMPLEMENT_VERTEX_FACTORY_PARAMETER_TYPE(FVisMeshInstancedVertexFactory, SF_Pixel
 
 IMPLEMENT_VERTEX_FACTORY_TYPE(FVisMeshInstancedVertexFactory, 
 	"/VisMeshPlugin/CommonBase/VisMeshLocalVertexFactory.ush",
-	EVertexFactoryFlags::UsedWithMaterials 
-	| EVertexFactoryFlags::SupportsDynamicLighting 
-	| EVertexFactoryFlags::SupportsManualVertexFetch
+	EVertexFactoryFlags::UsedWithMaterials
+  | EVertexFactoryFlags::SupportsStaticLighting
+  | EVertexFactoryFlags::SupportsDynamicLighting
+  | EVertexFactoryFlags::SupportsManualVertexFetch
+  | EVertexFactoryFlags::SupportsPositionOnly
 );
 
 void FVisMeshInstancedVertexFactory::ModifyCompilationEnvironment(
