@@ -57,7 +57,12 @@ public:
 	// 供 ShaderParameters 类获取 UniformBuffer
 	FRHIUniformBuffer* GetInstanceUniformBuffer() const
 	{
-		return UniformBuffer;
+		return InstanceBuffer;
+	}
+
+	FRHIUniformBuffer* GetInstanceLooseUniformBuffer() const
+	{
+		return VisMeshLooseParametersUniformBuffer;
 	}
 
 	void GetVertexElements(ERHIFeatureLevel::Type InFeatureLevel, 
@@ -85,7 +90,8 @@ protected:
 private:
 	FInstancedVisMeshDataType InstanceData;
 
-	TUniformBufferRef<FInstancedVisMeshVertexFactoryUniformShaderParameters> UniformBuffer;
+	TUniformBufferRef<FInstancedVisMeshVertexFactoryUniformShaderParameters> InstanceBuffer;
+	TUniformBufferRef<FInstancedVisMeshVFLooseUniformShaderParameters> VisMeshLooseParametersUniformBuffer;
 };
 
 // 定义 Shader Parameter 绑定类

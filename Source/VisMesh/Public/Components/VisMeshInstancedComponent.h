@@ -1,20 +1,35 @@
-#pragma once
-#include "RenderBase/VisMeshComponentBase.h"
-#include "VisMeshIndirectComponent.generated.h"
+// Fill out your copyright notice in the Description page of Project Settings.
 
-UCLASS()
-class UVisMeshIndirectComponent : public UVisMeshComponentBase
+#pragma once
+
+#include "CoreMinimal.h"
+#include "RenderBase/VisMeshComponentBase.h"
+#include "VisMeshInstancedComponent.generated.h"
+
+
+UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
+class VISMESH_API UVisMeshInstancedComponent : public UVisMeshComponentBase
 {
 	GENERATED_BODY()
+
 public:
+	// Sets default values for this component's properties
+	explicit UVisMeshInstancedComponent(FObjectInitializer const& Initializer);
 
-	explicit UVisMeshIndirectComponent(const FObjectInitializer& ObjectInitializer);
-	
-	UPROPERTY(EditAnywhere, Category = "GenerationArgs")
-	int32 NumInstances = 1000; // 总数
+protected:
+	// Called when the game starts
+	virtual void BeginPlay() override;
+
+public:
+	// Called every frame
+	virtual void TickComponent(float DeltaTime, ELevelTick TickType,
+	                           FActorComponentTickFunction* ThisTickFunction) override;
 
 	UPROPERTY(EditAnywhere, Category = "GenerationArgs")
-	int32 NumColumns = 10;    // 换行阈值
+	int32 NumInstances = 1; // 总数
+
+	UPROPERTY(EditAnywhere, Category = "GenerationArgs")
+	int32 NumColumns = 1;    // 换行阈值
 
 	UPROPERTY(EditAnywhere, Category = "GenerationArgs")
 	float XSpace = 100.0f;

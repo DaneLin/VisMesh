@@ -4,7 +4,7 @@
 #include "Components/VisMeshIndirectSceneProxy.h"
 
 UVisMeshIndirectComponent::UVisMeshIndirectComponent(FObjectInitializer const& Initializer)
-	: UVisMeshComponentBase(Initializer)
+	: Super(Initializer)
 {
 	if(Material == nullptr)
 	{

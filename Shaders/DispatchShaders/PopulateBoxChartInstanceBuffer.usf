@@ -1,0 +1,89 @@
+/*=============================================================================
+    PopulateVertexAndIndirectBuffer.usf
+    生成 Instance Transform (Instanced Rendering Mode)
+=============================================================================*/
+
+#include "/Engine/Private/Common.ush"
+
+// -----------------------------------------------------------------------------
+// Shader Parameters
+// -----------------------------------------------------------------------------
+float XSpace;       // X轴 间距
+float YSpace;       // Y轴 间距
+int NumColumns;     // 每行有多少列
+int NumInstances;   // 总生成的柱子数量
+float Time;         // 时间 (用于高度动画)
+
+// [修改] 输出：Instance 变换矩阵 Buffer (每实例 3 个 float4)
+// 对应 C++ 端的 FVisMeshInstanceBuffer UAV
+RWBuffer<float4> OutInstanceTransforms;
+
+// 输出：间接绘制参数 [VertexCount, InstanceCount, StartVertex, StartInstance]
+RWBuffer<uint> OutIndirectArgs;
+
+#define WIDTH 50.0f
+// 假设基础 Mesh 是一个 1x1x1 的单位立方体，这里定义基础缩放
+// 如果你的 PositionBuffer 已经是 50x50 的大小，这里 ScaleX/Y 设为 1.0 即可
+
+[numthreads(THREAD_COUNT, 1, 1)]
+void MainCS(uint TaskIndex : SV_DispatchThreadID)
+{
+    // 越界检查
+    if (TaskIndex >= (uint)NumInstances)
+    {
+        return;
+    }
+
+    // 1. 计算位置 (Translation)
+    uint Row = TaskIndex / NumColumns;
+    uint Col = TaskIndex % NumColumns;
+    
+    // 计算世界坐标偏移
+    float3 Position = float3(Col * XSpace, Row * YSpace, 0.0f);
+
+    // 2. 计算高度动画 (Scale Z)
+    float2 GridCenter = float2(NumColumns * 0.5f, NumInstances / NumColumns * 0.5f);
+    float Dist = distance(float2(Col, Row), GridCenter);
+    float Wave = sin(Dist * 0.1f - Time * 2.0f) * 0.5f + 0.5f;
+    float BarHeight = Wave * 500.0f + 20.0f;
+
+    // 3. 构建变换矩阵 (3x4 Matrix, Transposed as 3x float4)
+    // 假设 VertexFactory 使用的是 BasePass 的逻辑：
+    // Row0: X轴方向 (Scale X) + Translation X
+    // Row1: Y轴方向 (Scale Y) + Translation Y
+    // Row2: Z轴方向 (Scale Z) + Translation Z
+    
+    float ScaleX = WIDTH;
+    float ScaleY = WIDTH;
+    float ScaleZ = BarHeight;
+
+    // 构建矩阵行 (UE Instance Transform 格式: AxisX_Tx, AxisY_Ty, AxisZ_Tz)
+    // 注意：这里的第四个分量是 Position
+    float4 TransformRow0 = float4(ScaleX, 0.0f, 0.0f, Position.x);
+    float4 TransformRow1 = float4(0.0f, ScaleY, 0.0f, Position.y);
+    float4 TransformRow2 = float4(0.0f, 0.0f, ScaleZ, Position.z);
+
+    // 4. 写入 Buffer
+    // 每个 Instance 占用 3 个 float4
+    uint WriteOffset = TaskIndex * 3;
+    OutInstanceTransforms[WriteOffset + 0] = TransformRow0;
+    OutInstanceTransforms[WriteOffset + 1] = TransformRow1;
+    OutInstanceTransforms[WriteOffset + 2] = TransformRow2;
+
+    // 5. 写入 Indirect Arguments (仅需由第0个线程写入一次)
+    if (TaskIndex == 0)
+    {
+        // 关键修改：
+        // Arg[0]: IndexCountPerInstance (如果用索引) 或 VertexCountPerInstance (36)
+        // Arg[1]: InstanceCount (生成的总实例数)
+        // Arg[2]: StartIndexLocation 或 StartVertexLocation
+        // Arg[3]: BaseVertexLocation
+        // Arg[4]: StartInstanceLocation
+        
+        // 假设每个 Box 有 36 个顶点 (6面 * 2三角形 * 3顶点)
+        OutIndirectArgs[0] = 36;            // VertexCountPerInstance
+        OutIndirectArgs[1] = NumInstances;  // InstanceCount
+        OutIndirectArgs[2] = 0;             // StartVertexLocation
+        OutIndirectArgs[3] = 0;             // StartInstanceLocation
+    }
+}

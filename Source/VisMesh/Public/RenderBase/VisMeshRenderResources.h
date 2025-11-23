@@ -170,7 +170,10 @@ class FPositionUAVVertexBuffer : public FVertexBuffer
 public:
 	virtual const TCHAR* GetName() const;
 
-	FPositionUAVVertexBuffer(int32 InNumVertices);
+	FPositionUAVVertexBuffer(int32 InNumVertices)
+		:NumVertices(InNumVertices)
+	{
+	}
 
 	virtual void InitRHI(FRHICommandListBase& RHICmdList) override;
 
@@ -204,3 +207,82 @@ struct FInstancedVisMeshDataType
 	int32 NumCustomDataFloats = 0;
 };
 
+class FVisMeshSubBuffer : public FVertexBuffer
+{
+public:
+	FVisMeshSubBuffer(uint32 InVector4CountPerInstance) 
+		: Vector4CountPerInstance(InVector4CountPerInstance)
+		, NumInstances(0)
+	{}
+
+	void Init(int32 InNumInstances)
+	{
+		NumInstances = InNumInstances;
+	}
+
+	virtual void InitRHI(FRHICommandListBase& RHICmdList) override;
+	virtual void ReleaseRHI() override;
+
+	FRHIShaderResourceView* GetSRV() const { return SRV; }
+	FRHIUnorderedAccessView* GetUAV() const { return UAV; }
+
+private:
+	uint32 Vector4CountPerInstance;
+	int32 NumInstances;
+	FShaderResourceViewRHIRef SRV;
+	FUnorderedAccessViewRHIRef UAV;
+};
+
+/** * 管理类：组合了 Origin, Transform, Lightmap 三个独立的 Buffer
+ * 注意：这里不再继承 FVertexBuffer，而是继承 FRenderResource，因为它管理着多个 VertexBuffer
+ */
+class FVisMeshInstanceBuffer : public FRenderResource
+{
+public:
+	FVisMeshInstanceBuffer(int32 InNumInstances)
+		: OriginBuffer(1)    // 1x float4
+		, TransformBuffer(3) // 3x float4
+		, LightmapBuffer(1)  // 1x float4
+		, NumInstances(InNumInstances)
+	{
+		// 预先设置好实例数量
+		OriginBuffer.Init(NumInstances);
+		TransformBuffer.Init(NumInstances);
+		LightmapBuffer.Init(NumInstances);
+	}
+
+	virtual const TCHAR* GetName() const { return TEXT("FVisMeshInstanceBuffer"); }
+
+	// 依次初始化所有子 Buffer
+	virtual void InitRHI(FRHICommandListBase& RHICmdList) override
+	{
+		OriginBuffer.InitResource(RHICmdList);
+		TransformBuffer.InitResource(RHICmdList);
+		LightmapBuffer.InitResource(RHICmdList);
+	}
+
+	// 依次释放所有子 Buffer
+	virtual void ReleaseRHI() override
+	{
+		OriginBuffer.ReleaseResource();
+		TransformBuffer.ReleaseResource();
+		LightmapBuffer.ReleaseResource();
+	}
+
+	void BindToDataType(FInstancedVisMeshDataType& OutData) const;
+
+	// 获取 Accessors (Compute Shader 需要分别绑定这三个 UAV)
+	FRHIUnorderedAccessView* GetOriginUAV() const { return OriginBuffer.GetUAV(); }
+	FRHIUnorderedAccessView* GetTransformUAV() const { return TransformBuffer.GetUAV(); }
+	FRHIUnorderedAccessView* GetLightmapUAV() const { return LightmapBuffer.GetUAV(); }
+
+	int32 GetNumInstances() const { return NumInstances; }
+
+private:
+	// 子资源
+	FVisMeshSubBuffer OriginBuffer;
+	FVisMeshSubBuffer TransformBuffer;
+	FVisMeshSubBuffer LightmapBuffer;
+
+	int32 NumInstances;
+};

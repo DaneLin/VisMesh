@@ -6,6 +6,7 @@
 #include "RenderBase/VisMeshDispatchShaders.h"
 
 DECLARE_GPU_DRAWCALL_STAT(PopulateVertexPass);
+DECLARE_GPU_DRAWCALL_STAT(PopulateInstancePass);
 
 void AddPopulateVertexPass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* PositionsUAV,FRHIUnorderedAccessView* IndirectArgsBufferUAV, float InXSpace, float InYSpace, int32 InNumColumns,int32 InNumInstances, float InTime)
 {
@@ -40,4 +41,77 @@ void ConvertProcMeshToDynMeshVertex(FDynamicMeshVertex& Vert, const FVisMeshVert
 	Vert.TangentX = ProcVert.Tangent.TangentX;
 	Vert.TangentZ = ProcVert.Normal;
 	Vert.TangentZ.Vector.W = ProcVert.Tangent.bFlipTangentY ? -127 : 127;
+}
+
+void AddBoxChartInstancingPass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* InstanceTransformsUAV,
+	FRHIUnorderedAccessView* IndirectArgsBufferUAV, float InXSpace, float InYSpace, int32 InNumColumns,
+	int32 InNumInstances, float InTime)
+{
+	RDG_GPU_STAT_SCOPE(GraphBuilder, PopulateInstancePass);
+	RDG_EVENT_SCOPE(GraphBuilder, "PopulateInstancePass");
+
+	TShaderMapRef<FPopulateBoxChartInstanceBufferCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
+
+	FPopulateBoxChartInstanceBufferCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FPopulateBoxChartInstanceBufferCS::FParameters>();
+    
+	// [修改] 绑定 Instance Transform UAV
+	PassParameters->OutInstanceTransforms = InstanceTransformsUAV;
+	PassParameters->OutIndirectArgs = IndirectArgsBufferUAV;
+    
+	PassParameters->XSpace = InXSpace;
+	PassParameters->YSpace = InYSpace;
+	PassParameters->NumColumns = InNumColumns;
+	PassParameters->NumInstances = InNumInstances;
+	PassParameters->Time = InTime;
+
+	int32 GroupCount = FMath::DivideAndRoundUp(InNumInstances, (int32)FPopulateVertexAndIndirectBufferCS::ThreadGroupSize);
+
+	FComputeShaderUtils::AddPass(
+		GraphBuilder,
+		RDG_EVENT_NAME("PopulateInstanceTransforms"),
+		ERDGPassFlags::Compute | ERDGPassFlags::NeverCull,
+		ComputeShader,
+		PassParameters,
+		FIntVector(GroupCount, 1, 1)
+	);
+}
+
+void GetUnitCubeVertices(TArray<FVector3f>& OutVertices)
+{
+	OutVertices.Empty(36);
+
+	// 定义 8 个角点 (0到1范围)
+	FVector3f p0(0, 0, 0);
+	FVector3f p1(1, 0, 0);
+	FVector3f p2(1, 1, 0);
+	FVector3f p3(0, 1, 0);
+	FVector3f p4(0, 0, 1);
+	FVector3f p5(1, 0, 1);
+	FVector3f p6(1, 1, 1);
+	FVector3f p7(0, 1, 1);
+
+	// 定义6个面，每个面2个三角形，按逆时针(CCW)顺序
+	// 1. Bottom (-Z)
+	OutVertices.Add(p0); OutVertices.Add(p2); OutVertices.Add(p1);
+	OutVertices.Add(p0); OutVertices.Add(p3); OutVertices.Add(p2);
+
+	// 2. Top (+Z)
+	OutVertices.Add(p4); OutVertices.Add(p5); OutVertices.Add(p6);
+	OutVertices.Add(p4); OutVertices.Add(p6); OutVertices.Add(p7);
+
+	// 3. Front (-Y)
+	OutVertices.Add(p0); OutVertices.Add(p1); OutVertices.Add(p5);
+	OutVertices.Add(p0); OutVertices.Add(p5); OutVertices.Add(p4);
+
+	// 4. Back (+Y)
+	OutVertices.Add(p3); OutVertices.Add(p6); OutVertices.Add(p2);
+	OutVertices.Add(p3); OutVertices.Add(p7); OutVertices.Add(p6);
+
+	// 5. Left (-X)
+	OutVertices.Add(p0); OutVertices.Add(p4); OutVertices.Add(p7);
+	OutVertices.Add(p0); OutVertices.Add(p7); OutVertices.Add(p3);
+
+	// 6. Right (+X)
+	OutVertices.Add(p1); OutVertices.Add(p2); OutVertices.Add(p6);
+	OutVertices.Add(p1); OutVertices.Add(p6); OutVertices.Add(p5);
 }

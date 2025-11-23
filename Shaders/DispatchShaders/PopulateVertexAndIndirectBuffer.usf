@@ -4,7 +4,7 @@
 =============================================================================*/
 
 #include "/Engine/Private/Common.ush"
-#include "VisMeshDrawCommon.ush"
+#include "../CommonBase/VisMeshDrawCommon.ush"
 
 // -----------------------------------------------------------------------------
 // Shader Parameters

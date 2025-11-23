@@ -3,6 +3,7 @@
 #include "DataDrivenShaderPlatformInfo.h"
 #include "MeshDrawShaderBindings.h"
 #include "MeshMaterialShader.h"
+#include "Engine/InstancedStaticMesh.h"
 
 const int32 InstancedVisMeshMaxTexCoord = 8;
 
@@ -16,7 +17,7 @@ IMPLEMENT_VERTEX_FACTORY_PARAMETER_TYPE(FVisMeshInstancedVertexFactory, SF_Verte
 IMPLEMENT_VERTEX_FACTORY_PARAMETER_TYPE(FVisMeshInstancedVertexFactory, SF_Pixel, FVisMeshInstancedVertexFactoryShaderParameters);
 
 IMPLEMENT_VERTEX_FACTORY_TYPE(FVisMeshInstancedVertexFactory, 
-	"/VisMeshPlugin/VisMeshLocalVertexFactory.ush",
+	"/VisMeshPlugin/CommonBase/VisMeshLocalVertexFactory.ush",
 	EVertexFactoryFlags::UsedWithMaterials 
 	| EVertexFactoryFlags::SupportsDynamicLighting 
 	| EVertexFactoryFlags::SupportsManualVertexFetch
@@ -48,37 +49,37 @@ void FVisMeshInstancedVertexFactory::InitRHI(FRHICommandListBase& RHICmdList)
 {
 	check(HasValidFeatureLevel());
 
-	const ERHIFeatureLevel::Type ThisFeatureLevel = GetFeatureLevel();
-	const bool bUseManualVertexFetch = GetType()->SupportsManualVertexFetch(ThisFeatureLevel);
-
-	FVertexDeclarationElementList Elements;
-	GetVertexElements(ThisFeatureLevel, EVertexInputStreamType::Default, bUseManualVertexFetch, Data, InstanceData, Elements, Streams);
-
-	// on mobile with GPUScene enabled instanced attributes[8-12] are used for a general auto-instancing
-	// so we add them only for desktop or if mobile has GPUScene disabled
-	// FIXME mobile: instanced attributes encode some editor related data as well (selection etc), need to split it into separate SRV as it's not supported with auto-instancing
-	// FIXME: Need to capture PrimitiveId elements for PSO precaching
-	uint8 AutoInstancingAttr_Mobile = 8;
-	const bool bMobileUsesGPUScene = MobileSupportsGPUScene();
-	if (ThisFeatureLevel > ERHIFeatureLevel::ES3_1 || !bMobileUsesGPUScene)
+	FLocalVertexFactory::InitRHI(RHICmdList);
+	
 	{
-		// Do not add general auto-instancing attributes for mobile
-		AutoInstancingAttr_Mobile = 0xff;
+		FInstancedVisMeshVertexFactoryUniformShaderParameters UniformParameters;
+		UniformParameters.VertexFetch_InstanceOriginBuffer = GetInstanceOriginSRV();
+		UniformParameters.VertexFetch_InstanceTransformBuffer = GetInstanceTransformSRV();
+		UniformParameters.VertexFetch_InstanceLightmapBuffer = GetInstanceLightmapSRV();
+		UniformParameters.InstanceCustomDataBuffer = GetInstanceCustomDataSRV();
+		UniformParameters.NumCustomDataFloats = InstanceData.NumCustomDataFloats;
+		InstanceBuffer = TUniformBufferRef<FInstancedVisMeshVertexFactoryUniformShaderParameters>::CreateUniformBufferImmediate(UniformParameters, UniformBuffer_MultiFrame, EUniformBufferValidation::None);
 	}
 
-	AddPrimitiveIdStreamElement(EVertexInputStreamType::Default, Elements, 13, AutoInstancingAttr_Mobile);
+	{
+		FInstancedVisMeshVFLooseUniformShaderParameters LooseParams;
+		// 设置默认值，防止 Shader 计算出错 (0/0 或 无限大)
+		// FadeOutParams: x=StartDistance, y=InvFadeRange, z=RenderSelected, w=RenderDeselected
+		// 下面的设置意味着：不淡出，始终可见
+		LooseParams.InstancingFadeOutParams = FVector4f(0.0f, 0.0f, 1.0f, 1.0f); 
+        
+		// ViewOrigin 和其他参数初始化为 0
+		LooseParams.InstancingTranslatedWorldViewOriginZero = FVector4f(0,0,0,0);
+		LooseParams.InstancingTranslatedWorldViewOriginOne = FVector4f(0,0,0,0);
+		LooseParams.InstancingViewZCompareZero = FVector4f(0,0,0,0);
+		LooseParams.InstancingViewZCompareOne = FVector4f(0,0,0,0);
+		LooseParams.InstancingViewZConstant = FVector4f(0,0,0,0);
 
-	// we don't need per-vertex shadow or lightmap rendering
-	InitDeclaration(Elements);
-
-	FInstancedVisMeshVertexFactoryUniformShaderParameters UniformParameters;
-	UniformParameters.VertexFetch_InstanceOriginBuffer = GetInstanceOriginSRV();
-	UniformParameters.VertexFetch_InstanceTransformBuffer = GetInstanceTransformSRV();
-	UniformParameters.VertexFetch_InstanceLightmapBuffer = GetInstanceLightmapSRV();
-	UniformParameters.InstanceCustomDataBuffer = GetInstanceCustomDataSRV();
-	UniformParameters.NumCustomDataFloats = InstanceData.NumCustomDataFloats;
-	UniformBuffer = TUniformBufferRef<FInstancedVisMeshVertexFactoryUniformShaderParameters>::CreateUniformBufferImmediate(UniformParameters, UniformBuffer_MultiFrame, EUniformBufferValidation::None);
-	
+		VisMeshLooseParametersUniformBuffer = TUniformBufferRef<FInstancedVisMeshVFLooseUniformShaderParameters>::CreateUniformBufferImmediate(
+			LooseParams, 
+			UniformBuffer_MultiFrame
+		);
+	}
 }
 
 void FVisMeshInstancedVertexFactory::GetVertexElements(ERHIFeatureLevel::Type InFeatureLevel,
@@ -195,9 +196,11 @@ void FVisMeshInstancedVertexFactoryShaderParameters::GetElementShaderBindings(co
                                                                               ERHIFeatureLevel::Type FeatureLevel, const FVertexFactory* VertexFactory, const FMeshBatchElement& BatchElement,
                                                                               FMeshDrawSingleShaderBindings& ShaderBindings, FVertexInputStreamArray& VertexStreams) const
 {
-	const auto* LocalVertexFactory = static_cast<const FLocalVertexFactory*>(VertexFactory);
+	// Decode VertexFactoryUserData as VertexFactoryUniformBuffer
 	FRHIUniformBuffer* VertexFactoryUniformBuffer = static_cast<FRHIUniformBuffer*>(BatchElement.VertexFactoryUserData);
-	if (LocalVertexFactory->SupportsManualVertexFetch(FeatureLevel) || UseGPUScene(GMaxRHIShaderPlatform, FeatureLevel))
+	const auto* LocalVertexFactory = static_cast<const FLocalVertexFactory*>(VertexFactory);
+	
+	if (LocalVertexFactory->SupportsManualVertexFetch(FeatureLevel))
 	{
 		if (!VertexFactoryUniformBuffer)
 		{
@@ -219,15 +222,16 @@ void FVisMeshInstancedVertexFactoryShaderParameters::GetElementShaderBindings(co
 			LocalVertexFactory->GetColorOverrideStream(OverrideColorVertexBuffer, VertexStreams);
 		}	
 	}
-
+	
+	const FInstancingUserData* InstancingUserData = (const FInstancingUserData*)BatchElement.UserData;
 	const auto* InstancedVertexFactory = static_cast<const FVisMeshInstancedVertexFactory*>(VertexFactory);
 	const int32 InstanceOffsetValue = BatchElement.UserIndex;
 
 	ShaderBindings.Add(InstanceOffset, InstanceOffsetValue);
 	
-	if (!UseGPUScene(Scene ? Scene->GetShaderPlatform() : GMaxRHIShaderPlatform))
+	//if (!UseGPUScene(Scene ? Scene->GetShaderPlatform() : GMaxRHIShaderPlatform))
 	{
-		ShaderBindings.Add(Shader->GetUniformBufferParameter<FInstancedVisMeshVertexFactoryUniformShaderParameters>(), InstancedVertexFactory->GetUniformBuffer());
+		ShaderBindings.Add(Shader->GetUniformBufferParameter<FInstancedVisMeshVertexFactoryUniformShaderParameters>(), InstancedVertexFactory->GetInstanceUniformBuffer());
 		if (InstancedVertexFactory->SupportsManualVertexFetch(FeatureLevel))
 		{
 			ShaderBindings.Add(VertexFetch_InstanceOriginBufferParameter, InstancedVertexFactory->GetInstanceOriginSRV());
@@ -243,15 +247,13 @@ void FVisMeshInstancedVertexFactoryShaderParameters::GetElementShaderBindings(co
 		}
 	}
 
-	// FVector4f InstancingOffset(ForceInit);
-	// // InstancedLODRange is only set for HierarchicalInstancedStaticMeshes
-	// if (InstancingUserData && BatchElement.InstancedLODRange)
-	// {
-	// 	InstancingOffset = (FVector3f)InstancingUserData->InstancingOffset; // LWC_TODO: precision loss
-	// }
-	// ShaderBindings.Add(InstancingOffsetParameter, InstancingOffset);
+	FVector4f InstancingOffset(ForceInit);
+	// InstancedLODRange is only set for HierarchicalInstancedStaticMeshes
+	if (InstancingUserData && BatchElement.InstancedLODRange)
+	{
+		InstancingOffset = (FVector3f)InstancingUserData->InstancingOffset; // LWC_TODO: precision loss
+	}
+	ShaderBindings.Add(InstancingOffsetParameter, InstancingOffset);
 
-	ShaderBindings.Add(Shader->GetUniformBufferParameter<FInstancedVisMeshVFLooseUniformShaderParameters>(), BatchElement.LooseParametersUniformBuffer);
-
-	
+	ShaderBindings.Add(Shader->GetUniformBufferParameter<FInstancedVisMeshVFLooseUniformShaderParameters>(), InstancedVertexFactory->GetInstanceLooseUniformBuffer());
 }

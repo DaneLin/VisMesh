@@ -2,9 +2,17 @@
 
 #include "ShaderParameterUtils.h"
 
-IMPLEMENT_GLOBAL_SHADER(FPopulateVertexAndIndirectBufferCS, "/VisMeshPlugin/PopulateVertexAndIndirectBuffer.usf", "MainCS",SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FPopulateVertexAndIndirectBufferCS, "/VisMeshPlugin/DispatchShaders/PopulateVertexAndIndirectBuffer.usf", "MainCS",SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FPopulateBoxChartInstanceBufferCS, "/VisMeshPlugin/DispatchShaders/PopulateBoxChartInstanceBuffer.usf", "MainCS",SF_Compute);
 
 void FPopulateVertexAndIndirectBufferCS::ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+{
+	FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+	OutEnvironment.SetDefine(TEXT("THREAD_COUNT"), ThreadGroupSize);
+}
+
+void FPopulateBoxChartInstanceBufferCS::ModifyCompilationEnvironment(
+	const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 {
 	FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
 	OutEnvironment.SetDefine(TEXT("THREAD_COUNT"), ThreadGroupSize);
