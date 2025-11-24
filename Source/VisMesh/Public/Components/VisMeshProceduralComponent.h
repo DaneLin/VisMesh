@@ -42,6 +42,19 @@ public:
 
 	void CreateMeshSection(int32 SectionIndex, const TArray<FVector>& Vertices, const TArray<int32>& Triangles, const TArray<FVector>& Normals, const TArray<FVector2D>& UV0, const TArray<FVector2D>& UV1, const TArray<FVector2D>& UV2, const TArray<FVector2D>& UV3, const TArray<FColor>& VertexColors, const TArray<FVisMeshTangent>& Tangents, bool bCreateCollision);
 
+	/** * 极简 API：创建网格
+	 * @param MeshData   包含所有顶点属性的结构体
+	 */
+	void CreateMeshSection(int32 SectionIndex, const FVisMeshData& MeshData, bool bCreateCollision);
+
+	/** C++ 专用：零拷贝创建 (Move Semantics) */
+	void CreateMeshSection(int32 SectionIndex, FVisMeshData&& MeshData, bool bCreateCollision);
+
+	void UpdateMeshSection(int32 SectionIndex, const FVisMeshData& MeshData);
+
+	/** C++ 专用：零拷贝更新 (Move Semantics) */
+	void UpdateMeshSection(int32 SectionIndex, FVisMeshData&& MeshData);
+	
 	/**
 	 *	Create/replace a section for this vis mesh component.
 	 *	@param	SectionIndex		Index of the section to create or replace.
@@ -171,9 +184,6 @@ public:
 
 	/** Replace a section with new section geometry */
 	void SetVisMeshSection(int32 SectionIndex, const FVisMeshSection& Section);
-#if WITH_EDITOR
-	virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;
-#endif
 	
 	//~ Begin UPrimitiveComponent Interface.
 	virtual FPrimitiveSceneProxy* CreateSceneProxy() override;
@@ -192,13 +202,6 @@ public:
 	//~ Begin USceneComponent Interface.
 	virtual FBoxSphereBounds CalcBounds(const FTransform& LocalToWorld) const override;
 	//~ Begin USceneComponent Interface.
-
-	// For instance usage
-	UPROPERTY(EditAnywhere, Category = "VisMesh");
-	bool bUseInstance = false;
-
-	UPROPERTY(EditAnywhere, Category = "VisMesh");
-	int InstanceNum = 10;
 
 private:
 	

@@ -60,101 +60,86 @@ public:
 	{}
 };
 
-/** One vertex for the vis mesh, used for storing data internally */
+/** 
+ * 纯数据容器，采用 SOA 布局,用于在 API 间传递网格数据 
+ */
 USTRUCT(BlueprintType)
-struct FVisMeshVertex
+struct FVisMeshData
 {
 	GENERATED_BODY()
-public:
 
-	/** Vertex position */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Vertex)
-	FVector Position;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	TArray<FVector> Positions;
 
-	/** Vertex normal */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Vertex)
-	FVector Normal;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	TArray<FVector> Normals;
 
-	/** Vertex tangent */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Vertex)
-	FVisMeshTangent Tangent;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	TArray<FVisMeshTangent> Tangents;
 
-	/** Vertex color */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Vertex)
-	FColor Color;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	TArray<FColor> Colors;
 
-	/** Vertex texture co-ordinate */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Vertex)
-	FVector2D UV0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	TArray<FVector2D> UV0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	TArray<FVector2D> UV1;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	TArray<FVector2D> UV2;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	TArray<FVector2D> UV3;
 
-	/** Vertex texture co-ordinate */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Vertex)
-	FVector2D UV1;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	TArray<int32> Triangles; // 这里用 int32 方便蓝图，内部转 uint32
 
-	/** Vertex texture co-ordinate */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Vertex)
-	FVector2D UV2;
+	/** 辅助函数：快速检查数据有效性 */
+	bool IsValid() const { return Positions.Num() > 0; }
+	int32 NumVertices() const { return Positions.Num(); }
 
-	/** Vertex texture co-ordinate */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Vertex)
-	FVector2D UV3;
-
-
-	FVisMeshVertex()
-		: Position(0.f, 0.f, 0.f)
-		, Normal(0.f, 0.f, 1.f)
-		, Tangent(FVector(1.f, 0.f, 0.f), false)
-		, Color(255, 255, 255)
-		, UV0(0.f, 0.f)
-		, UV1(0.f, 0.f)
-		, UV2(0.f, 0.f)
-		, UV3(0.f, 0.f)
-	{}
+	/** 辅助函数：清理数据 */
+	void Reset()
+	{
+		Positions.Reset();
+		Normals.Reset();
+		Tangents.Reset();
+		Colors.Reset();
+		UV0.Reset();
+		UV1.Reset();
+		UV2.Reset();
+		UV3.Reset();
+		Triangles.Reset();
+	}
 };
 
-/** One section of the vis mesh. Each material has its own section. */
 USTRUCT()
 struct FVisMeshSection
 {
 	GENERATED_BODY()
-public:
 
-	/** Vertex buffer for this section */
+	// 直接复用数据结构
 	UPROPERTY()
-	TArray<FVisMeshVertex> ProcVertexBuffer;
+	FVisMeshData Data; 
 
-	/** Index buffer for this section */
-	UPROPERTY()
-	TArray<uint32> ProcIndexBuffer;
-	/** Local bounding box of section */
+	// --- 仅保留状态数据 ---
 	UPROPERTY()
 	FBox SectionLocalBox;
 
-	/** Should we build collision data for triangles in this section */
 	UPROPERTY()
-	bool bEnableCollision;
+	bool bEnableCollision = false;
 
-	/** Should we display this section */
 	UPROPERTY()
-	bool bSectionVisible;
+	bool bSectionVisible = true;
+    
+	FVisMeshSection() : SectionLocalBox(ForceInit) {}
 
-	FVisMeshSection()
-		: SectionLocalBox(ForceInit)
-		, bEnableCollision(false)
-		, bSectionVisible(true)
-	{}
-
-	/** Reset this section, clear all mesh info. */
 	void Reset()
 	{
-		ProcVertexBuffer.Empty();
-		ProcIndexBuffer.Empty();
+		Data.Reset();
 		SectionLocalBox.Init();
 		bEnableCollision = false;
 		bSectionVisible = true;
 	}
 };
-
 
 class FVisMeshSectionUpdateData
 {
@@ -162,7 +147,7 @@ public:
 	/** Section to update */
 	int32 TargetSection;
 	/** New vertex information */
-	TArray<FVisMeshVertex> NewVertexBuffer;
+	FVisMeshData Data;
 };
 
 class FPositionUAVVertexBuffer : public FVertexBuffer

@@ -17,6 +17,101 @@
 
 #define LOCTEXT_NAMESPACE "KismetVisMeshLibrary"
 
+// --- 辅助函数：SOA 顶点操作 ---
+/** 将源 SOA 数据中的指定索引顶点复制到目标 SOA 数据末尾，并返回新索引 */
+int32 VisMeshCopyVertex(FVisMeshData& Dest, const FVisMeshData& Src, int32 SrcIdx)
+{
+	// Position (必须存在)
+	int32 NewIndex = Dest.Positions.Add(Src.Positions[SrcIdx]);
+
+	// Attributes (检查源数据是否存在，若存在则复制，若不存在但目标有数据则补零)
+	// Normals
+	if (Src.Normals.IsValidIndex(SrcIdx)) Dest.Normals.Add(Src.Normals[SrcIdx]);
+	else if (Dest.Normals.Num() > 0) Dest.Normals.Add(FVector(0, 0, 1));
+
+	// Tangents
+	if (Src.Tangents.IsValidIndex(SrcIdx)) Dest.Tangents.Add(Src.Tangents[SrcIdx]);
+	else if (Dest.Tangents.Num() > 0) Dest.Tangents.Add(FVisMeshTangent());
+
+	// Colors
+	if (Src.Colors.IsValidIndex(SrcIdx)) Dest.Colors.Add(Src.Colors[SrcIdx]);
+	else if (Dest.Colors.Num() > 0) Dest.Colors.Add(FColor::White);
+
+	// UVs
+	if (Src.UV0.IsValidIndex(SrcIdx)) Dest.UV0.Add(Src.UV0[SrcIdx]);
+	else if (Dest.UV0.Num() > 0) Dest.UV0.Add(FVector2D::ZeroVector);
+
+	if (Src.UV1.IsValidIndex(SrcIdx)) Dest.UV1.Add(Src.UV1[SrcIdx]);
+	else if (Dest.UV1.Num() > 0) Dest.UV1.Add(FVector2D::ZeroVector);
+
+	if (Src.UV2.IsValidIndex(SrcIdx)) Dest.UV2.Add(Src.UV2[SrcIdx]);
+	else if (Dest.UV2.Num() > 0) Dest.UV2.Add(FVector2D::ZeroVector);
+
+	if (Src.UV3.IsValidIndex(SrcIdx)) Dest.UV3.Add(Src.UV3[SrcIdx]);
+	else if (Dest.UV3.Num() > 0) Dest.UV3.Add(FVector2D::ZeroVector);
+
+	return NewIndex;
+}
+
+/** 在源 SOA 数据的两个顶点之间进行插值，结果存入目标 SOA，返回新索引 */
+int32 VisMeshInterpolateVertex(FVisMeshData& Dest, const FVisMeshData& Src, int32 Idx0, int32 Idx1, float Alpha)
+{
+	// Handle dodgy alpha
+	if (FMath::IsNaN(Alpha) || !FMath::IsFinite(Alpha))
+	{
+		return VisMeshCopyVertex(Dest, Src, Idx1);
+	}
+
+	// Position
+	int32 NewIndex = Dest.Positions.Add(FMath::Lerp(Src.Positions[Idx0], Src.Positions[Idx1], Alpha));
+
+	// Normals
+	if (Src.Normals.IsValidIndex(Idx0) && Src.Normals.IsValidIndex(Idx1))
+	{
+		Dest.Normals.Add(FMath::Lerp(Src.Normals[Idx0], Src.Normals[Idx1], Alpha));
+	}
+	else if (Dest.Normals.Num() > 0) Dest.Normals.Add(FVector(0, 0, 1));
+
+	// Tangents
+	if (Src.Tangents.IsValidIndex(Idx0) && Src.Tangents.IsValidIndex(Idx1))
+	{
+		FVisMeshTangent NewTangent;
+		NewTangent.TangentX = FMath::Lerp(Src.Tangents[Idx0].TangentX, Src.Tangents[Idx1].TangentX, Alpha);
+		NewTangent.bFlipTangentY = Src.Tangents[Idx0].bFlipTangentY;
+		Dest.Tangents.Add(NewTangent);
+	}
+	else if (Dest.Tangents.Num() > 0) Dest.Tangents.Add(FVisMeshTangent());
+
+	// Colors
+	if (Src.Colors.IsValidIndex(Idx0) && Src.Colors.IsValidIndex(Idx1))
+	{
+		const FColor& C0 = Src.Colors[Idx0];
+		const FColor& C1 = Src.Colors[Idx1];
+		FColor Result;
+		Result.R = FMath::Clamp(FMath::TruncToInt(FMath::Lerp(float(C0.R), float(C1.R), Alpha)), 0, 255);
+		Result.G = FMath::Clamp(FMath::TruncToInt(FMath::Lerp(float(C0.G), float(C1.G), Alpha)), 0, 255);
+		Result.B = FMath::Clamp(FMath::TruncToInt(FMath::Lerp(float(C0.B), float(C1.B), Alpha)), 0, 255);
+		Result.A = FMath::Clamp(FMath::TruncToInt(FMath::Lerp(float(C0.A), float(C1.A), Alpha)), 0, 255);
+		Dest.Colors.Add(Result);
+	}
+	else if (Dest.Colors.Num() > 0) Dest.Colors.Add(FColor::White);
+
+	// UVs
+	auto InterpolateUV = [&](const TArray<FVector2D>& SrcUV, TArray<FVector2D>& DestUV)
+	{
+		if (SrcUV.IsValidIndex(Idx0) && SrcUV.IsValidIndex(Idx1))
+			DestUV.Add(FMath::Lerp(SrcUV[Idx0], SrcUV[Idx1], Alpha));
+		else if (DestUV.Num() > 0) DestUV.Add(FVector2D::ZeroVector);
+	};
+
+	InterpolateUV(Src.UV0, Dest.UV0);
+	InterpolateUV(Src.UV1, Dest.UV1);
+	InterpolateUV(Src.UV2, Dest.UV2);
+	InterpolateUV(Src.UV3, Dest.UV3);
+
+	return NewIndex;
+}
+
 void UKismetVisMeshLibrary::GenerateBoxMesh(FVector BoxRadius, TArray<FVector>& Vertices, TArray<int32>& Triangles,TArray<FVector>& Normals, TArray<FVector2D>& UVs, TArray<FVisMeshTangent>& Tangents)
 {
 	// Generate verts
@@ -556,31 +651,23 @@ void UKismetVisMeshLibrary::GetSectionFromVisMesh(UVisMeshProceduralComponent* I
 	if (InProcMesh && SectionIndex >= 0 && SectionIndex < InProcMesh->GetNumSections())
 	{
 		const FVisMeshSection* Section = InProcMesh->GetVisMeshSection(SectionIndex);
+		const FVisMeshData& Data = Section->Data;
 
-		const int32 NumOutputVerts = Section->ProcVertexBuffer.Num();
+		Vertices = Data.Positions;
+		// Copy Attributes (with safety check if they exist)
+		const int32 NumVerts = Vertices.Num();
+		
+		if (Data.Normals.Num() == NumVerts) Normals = Data.Normals;
+		else Normals.Init(FVector(0, 0, 1), NumVerts);
 
-		// Allocate output buffers for vert data
-		Vertices.SetNumUninitialized(NumOutputVerts);
-		Normals.SetNumUninitialized(NumOutputVerts);
-		UVs.SetNumUninitialized(NumOutputVerts);
-		Tangents.SetNumUninitialized(NumOutputVerts);
-		// copy data
-		for (int32 VertIdx = 0; VertIdx < NumOutputVerts; VertIdx++)
-		{
-			const FVisMeshVertex& Vert = Section->ProcVertexBuffer[VertIdx];
-			Vertices[VertIdx] = Vert.Position;
-			Normals[VertIdx] = Vert.Normal;
-			UVs[VertIdx] = Vert.UV0;
-			Tangents[VertIdx] = Vert.Tangent;
-		}
+		if (Data.UV0.Num() == NumVerts) UVs = Data.UV0;
+		else UVs.Init(FVector2D::ZeroVector, NumVerts);
+
+		if (Data.Tangents.Num() == NumVerts) Tangents = Data.Tangents;
+		else Tangents.Init(FVisMeshTangent(), NumVerts);
 
 		// Copy index buffer
-		const int32 NumIndices = Section->ProcIndexBuffer.Num();
-		Triangles.SetNumUninitialized(NumIndices);
-		for (int32 IndexIdx = 0; IndexIdx < NumIndices; IndexIdx++)
-		{
-			Triangles[IndexIdx] = Section->ProcIndexBuffer[IndexIdx];
-		}
+		Triangles = Data.Triangles;
 	}
 }
 
@@ -612,79 +699,54 @@ int32 VisMeshBoxPlaneCompare(FBox InBox, const FPlane& InPlane)
 	}
 }
 
-/** Take two static mesh verts and interpolate all values between them */
-FVisMeshVertex VisMeshInterpolateVert(const FVisMeshVertex& V0, const FVisMeshVertex& V1, float Alpha)
+/** Transform triangle from 2D to 3D static-mesh triangle (SOA Version) */
+void VisMeshTransform2DPolygonTo3D(const FUtilPoly2D& InPoly, const FMatrix& InMatrix, FVisMeshData& OutData, FBox& OutBox)
 {
-	FVisMeshVertex Result;
-
-	// Handle dodgy alpha
-	if (FMath::IsNaN(Alpha) || !FMath::IsFinite(Alpha))
-	{
-		Result = V1;
-		return Result;
-	}
-
-	Result.Position = FMath::Lerp(V0.Position, V1.Position, Alpha);
-
-	Result.Normal = FMath::Lerp(V0.Normal, V1.Normal, Alpha);
-
-	Result.Tangent.TangentX = FMath::Lerp(V0.Tangent.TangentX, V1.Tangent.TangentX, Alpha);
-	Result.Tangent.bFlipTangentY = V0.Tangent.bFlipTangentY; // Assume flipping doesn't change along edge...
-
-	Result.UV0 = FMath::Lerp(V0.UV0, V1.UV0, Alpha);
-
-	Result.Color.R = FMath::Clamp(FMath::TruncToInt(FMath::Lerp(float(V0.Color.R), float(V1.Color.R), Alpha)), 0, 255);
-	Result.Color.G = FMath::Clamp(FMath::TruncToInt(FMath::Lerp(float(V0.Color.G), float(V1.Color.G), Alpha)), 0, 255);
-	Result.Color.B = FMath::Clamp(FMath::TruncToInt(FMath::Lerp(float(V0.Color.B), float(V1.Color.B), Alpha)), 0, 255);
-	Result.Color.A = FMath::Clamp(FMath::TruncToInt(FMath::Lerp(float(V0.Color.A), float(V1.Color.A), Alpha)), 0, 255);
-
-	return Result;
-}
-
-/** Transform triangle from 2D to 3D static-mesh triangle. */
-void VisMeshTransform2DPolygonTo3D(const FUtilPoly2D& InPoly, const FMatrix& InMatrix, TArray<FVisMeshVertex>& OutVerts, FBox& OutBox)
-{
-	FVector3f PolyNormal = (FVector3f)-InMatrix.GetUnitAxis(EAxis::Z);
+	FVector PolyNormal = (FVector)-InMatrix.GetUnitAxis(EAxis::Z);
 	FVisMeshTangent PolyTangent(InMatrix.GetUnitAxis(EAxis::X), false);
 
 	for (int32 VertexIndex = 0; VertexIndex < InPoly.Verts.Num(); VertexIndex++)
 	{
 		const FUtilVertex2D& InVertex = InPoly.Verts[VertexIndex];
 
-		FVisMeshVertex NewVert;
-
-		NewVert.Position = InMatrix.TransformPosition(FVector(InVertex.Pos.X, InVertex.Pos.Y, 0.f));
-		NewVert.Normal = (FVector)PolyNormal;
-		NewVert.Tangent = PolyTangent;
-		NewVert.Color = InVertex.Color;
-		NewVert.UV0 = InVertex.UV;
-
-		OutVerts.Add(NewVert);
+		FVector NewPos = InMatrix.TransformPosition(FVector(InVertex.Pos.X, InVertex.Pos.Y, 0.f));
+		
+		OutData.Positions.Add(NewPos);
+		OutData.Normals.Add(PolyNormal);
+		OutData.Tangents.Add(PolyTangent);
+		OutData.Colors.Add(InVertex.Color);
+		OutData.UV0.Add(InVertex.UV);
+		// Zero fill others if needed
+		if(OutData.UV1.Num() > 0) OutData.UV1.Add(FVector2D::ZeroVector);
+		if(OutData.UV2.Num() > 0) OutData.UV2.Add(FVector2D::ZeroVector);
+		if(OutData.UV3.Num() > 0) OutData.UV3.Add(FVector2D::ZeroVector);
 
 		// Update bounding box
-		OutBox += NewVert.Position;
+		OutBox += NewPos;
 	}
 }
 
-/** Given a polygon, decompose into triangles. */
-bool VisMeshTriangulatePoly(TArray<uint32>& OutTris, const TArray<FVisMeshVertex>& PolyVerts, int32 VertBase, const FVector3f& PolyNormal)
+/** Given a polygon, decompose into triangles. (SOA Version) */
+bool VisMeshTriangulatePoly(TArray<int32>& OutTris, const FVisMeshData& PolyData, int32 VertBase, const FVector3f& PolyNormal)
 {
 	// Can't work if not enough verts for 1 triangle
-	int32 NumVerts = PolyVerts.Num() - VertBase;
+	int32 NumVerts = PolyData.Positions.Num() - VertBase;
 	if (NumVerts < 3)
 	{
-		OutTris.Add(0);
-		OutTris.Add(2);
-		OutTris.Add(1);
-
-		// Return true because poly is already a tri
-		return true;
+		// Warning: This simple fallback assumes at least 3 verts exist in total? 
+		// Logic preserved from original, though 0, 2, 1 might be invalid if NumVerts < 3
+		if (NumVerts == 3) 
+		{
+			OutTris.Add(0 + VertBase);
+			OutTris.Add(2 + VertBase);
+			OutTris.Add(1 + VertBase);
+			return true;
+		}
+		return false; 
 	}
 
-	// Remember initial size of OutTris, in case we need to give up and return to this size
 	const int32 TriBase = OutTris.Num();
 
-	// Init array of vert indices, in order. We'll modify this
 	TArray<int32> VertIndices;
 	VertIndices.AddUninitialized(NumVerts);
 	for (int VertIndex = 0; VertIndex < NumVerts; VertIndex++)
@@ -692,25 +754,22 @@ bool VisMeshTriangulatePoly(TArray<uint32>& OutTris, const TArray<FVisMeshVertex
 		VertIndices[VertIndex] = VertBase + VertIndex;
 	}
 
-	// Keep iterating while there are still vertices
 	while (VertIndices.Num() >= 3)
 	{
-		// Look for an 'ear' triangle
 		bool bFoundEar = false;
 		for (int32 EarVertexIndex = 0; EarVertexIndex < VertIndices.Num(); EarVertexIndex++)
 		{
-			// Triangle is 'this' vert plus the one before and after it
 			const int32 AIndex = (EarVertexIndex == 0) ? VertIndices.Num() - 1 : EarVertexIndex - 1;
 			const int32 BIndex = EarVertexIndex;
 			const int32 CIndex = (EarVertexIndex + 1) % VertIndices.Num();
 
-			const FVisMeshVertex& AVert = PolyVerts[VertIndices[AIndex]];
-			const FVisMeshVertex& BVert = PolyVerts[VertIndices[BIndex]];
-			const FVisMeshVertex& CVert = PolyVerts[VertIndices[CIndex]];
+			// Access Positions directly from SOA
+			const FVector3f APos = (FVector3f)PolyData.Positions[VertIndices[AIndex]];
+			const FVector3f BPos = (FVector3f)PolyData.Positions[VertIndices[BIndex]];
+			const FVector3f CPos = (FVector3f)PolyData.Positions[VertIndices[CIndex]];
 
-			// Check that this vertex is convex (cross product must be positive)
-			const FVector3f ABEdge = FVector3f(BVert.Position - AVert.Position);
-			const FVector3f ACEdge = FVector3f(CVert.Position - AVert.Position);
+			const FVector3f ABEdge = BPos - APos;
+			const FVector3f ACEdge = CPos - APos;
 			const float TriangleDeterminant = (ABEdge ^ ACEdge) | PolyNormal;
 			if (TriangleDeterminant > 0.f)
 			{
@@ -718,37 +777,31 @@ bool VisMeshTriangulatePoly(TArray<uint32>& OutTris, const TArray<FVisMeshVertex
 			}
 
 			bool bFoundVertInside = false;
-			// Look through all verts before this in array to see if any are inside triangle
 			for (int32 VertexIndex = 0; VertexIndex < VertIndices.Num(); VertexIndex++)
 			{
-				const FVisMeshVertex& TestVert = PolyVerts[VertIndices[VertexIndex]];
-
-				if(	VertexIndex != AIndex && 
-					VertexIndex != BIndex && 
-					VertexIndex != CIndex &&
-					FGeomTools::PointInTriangle((FVector3f)AVert.Position, (FVector3f)BVert.Position, (FVector3f)CVert.Position, (FVector3f)TestVert.Position) )
+				if (VertexIndex != AIndex && VertexIndex != BIndex && VertexIndex != CIndex)
 				{
-					bFoundVertInside = true;
-					break;
+					const FVector3f TestPos = (FVector3f)PolyData.Positions[VertIndices[VertexIndex]];
+					if (FGeomTools::PointInTriangle(APos, BPos, CPos, TestPos))
+					{
+						bFoundVertInside = true;
+						break;
+					}
 				}
 			}
 
-			// Triangle with no verts inside - its an 'ear'! 
 			if (!bFoundVertInside)
 			{
 				OutTris.Add(VertIndices[AIndex]);
 				OutTris.Add(VertIndices[CIndex]);
 				OutTris.Add(VertIndices[BIndex]);
 
-				// And remove vertex from polygon
 				VertIndices.RemoveAt(EarVertexIndex);
-
 				bFoundEar = true;
 				break;
 			}
 		}
 
-		// If we couldn't find an 'ear' it indicates something is bad with this polygon - discard triangles and return.
 		if (!bFoundEar)
 		{
 			OutTris.SetNum(TriBase);
@@ -805,7 +858,7 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 		{
 			FVisMeshSection* BaseSection = InProcMesh->GetVisMeshSection(SectionIndex);
 			// If we have a section, and it has some valid geom
-			if (BaseSection != nullptr && BaseSection->ProcIndexBuffer.Num() > 0 && BaseSection->ProcVertexBuffer.Num() > 0)
+			if (BaseSection != nullptr && BaseSection->Data.Triangles.Num() > 0 && BaseSection->Data.Positions.Num() > 0)
 			{
 				// Compare bounding box of section with slicing plane
 				int32 BoxCompare = VisMeshBoxPlaneCompare(BaseSection->SectionLocalBox, SlicePlane);
@@ -847,8 +900,8 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 					TMap<int32, int32> BaseToSlicedVertIndex;
 					TMap<int32, int32> BaseToOtherSlicedVertIndex;
 
-					const int32 NumBaseVerts = BaseSection->ProcVertexBuffer.Num();
-
+					const int32 NumBaseVerts = BaseSection->Data.Positions.Num();
+					
 					// Distance of each base vert from slice plane
 					TArray<float> VertDistance;
 					VertDistance.AddUninitialized(NumBaseVerts);
@@ -856,33 +909,33 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 					// Build vertex buffer 
 					for (int32 BaseVertIndex = 0; BaseVertIndex < NumBaseVerts; BaseVertIndex++)
 					{
-						FVisMeshVertex& BaseVert = BaseSection->ProcVertexBuffer[BaseVertIndex];
-
+						const FVector& BasePos = BaseSection->Data.Positions[BaseVertIndex];
+						
 						// Calc distance from plane
-						VertDistance[BaseVertIndex] = SlicePlane.PlaneDot(BaseVert.Position);
-
+						VertDistance[BaseVertIndex] = SlicePlane.PlaneDot(BasePos);
+						
 						// See if vert is being kept in this section
 						if (VertDistance[BaseVertIndex] > 0.f)
 						{
-							// Copy to sliced v buffer
-							int32 SlicedVertIndex = NewSection.ProcVertexBuffer.Add(BaseVert);
+							// Changed: Copy to sliced v buffer using SOA Helper
+							int32 SlicedVertIndex = VisMeshCopyVertex(NewSection.Data, BaseSection->Data, BaseVertIndex);
 							// Update section bounds
-							NewSection.SectionLocalBox += BaseVert.Position;
+							NewSection.SectionLocalBox += BasePos;
 							// Add to map
 							BaseToSlicedVertIndex.Add(BaseVertIndex, SlicedVertIndex);
 						}
 						// Or add to other half if desired
 						else if(NewOtherSection != nullptr)
 						{
-							int32 SlicedVertIndex = NewOtherSection->ProcVertexBuffer.Add(BaseVert);
-							NewOtherSection->SectionLocalBox += BaseVert.Position;
+							int32 SlicedVertIndex = VisMeshCopyVertex(NewOtherSection->Data, BaseSection->Data, BaseVertIndex);
+							NewOtherSection->SectionLocalBox += BasePos;
 							BaseToOtherSlicedVertIndex.Add(BaseVertIndex, SlicedVertIndex);
 						}
 					}
 
 
 					// Iterate over base triangles (ie 3 indices at a time)
-					for (int32 BaseIndex = 0; BaseIndex < BaseSection->ProcIndexBuffer.Num(); BaseIndex += 3)
+					for (int32 BaseIndex = 0; BaseIndex < BaseSection->Data.Triangles.Num(); BaseIndex += 3)
 					{
 						int32 BaseV[3]; // Triangle vert indices in original mesh
 						int32* SlicedV[3]; // Pointers to vert indices in new v buffer
@@ -892,7 +945,7 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 						for (int32 i = 0; i < 3; i++)
 						{
 							// Get triangle vert index
-							BaseV[i] = BaseSection->ProcIndexBuffer[BaseIndex + i];
+							BaseV[i] = BaseSection->Data.Triangles[BaseIndex + i];
 							// Look up in sliced v buffer
 							SlicedV[i] = BaseToSlicedVertIndex.Find(BaseV[i]);
 							// Look up in 'other half' v buffer (if desired)
@@ -907,9 +960,9 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 						// If all verts survived plane cull, keep the triangle
 						if (SlicedV[0] != nullptr && SlicedV[1] != nullptr && SlicedV[2] != nullptr)
 						{
-							NewSection.ProcIndexBuffer.Add(*SlicedV[0]);
-							NewSection.ProcIndexBuffer.Add(*SlicedV[1]);
-							NewSection.ProcIndexBuffer.Add(*SlicedV[2]);
+							NewSection.Data.Triangles.Add(*SlicedV[0]);
+							NewSection.Data.Triangles.Add(*SlicedV[1]);
+							NewSection.Data.Triangles.Add(*SlicedV[2]);
 						}
 						// If all verts were removed by plane cull
 						else if (SlicedV[0] == nullptr && SlicedV[1] == nullptr && SlicedV[2] == nullptr)
@@ -917,9 +970,9 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 							// If creating other half, add all verts to that
 							if (NewOtherSection != nullptr)
 							{
-								NewOtherSection->ProcIndexBuffer.Add(*SlicedOtherV[0]);
-								NewOtherSection->ProcIndexBuffer.Add(*SlicedOtherV[1]);
-								NewOtherSection->ProcIndexBuffer.Add(*SlicedOtherV[2]);
+								NewOtherSection->Data.Triangles.Add(*SlicedOtherV[0]);
+								NewOtherSection->Data.Triangles.Add(*SlicedOtherV[1]);
+								NewOtherSection->Data.Triangles.Add(*SlicedOtherV[2]);
 							}
 						}
 						// If partially culled, clip to create 1 or 2 new triangles
@@ -963,13 +1016,12 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 								{
 									// Find distance along edge that plane is
 									float Alpha = -PlaneDist[ThisVert] / (PlaneDist[NextVert] - PlaneDist[ThisVert]);
-									// Interpolate vertex params to that point
-									FVisMeshVertex InterpVert = VisMeshInterpolateVert(BaseSection->ProcVertexBuffer[BaseV[ThisVert]], BaseSection->ProcVertexBuffer[BaseV[NextVert]], FMath::Clamp(Alpha, 0.0f, 1.0f));
-
+									// Interpolate vertex params to that point (SOA Helper)
 									// Add to vertex buffer
-									int32 InterpVertIndex = NewSection.ProcVertexBuffer.Add(InterpVert);
+									int32 InterpVertIndex = VisMeshInterpolateVertex(NewSection.Data, BaseSection->Data, BaseV[ThisVert], BaseV[NextVert], FMath::Clamp(Alpha, 0.0f, 1.0f));
+									const FVector InterpPos = NewSection.Data.Positions[InterpVertIndex];
 									// Update bounds
-									NewSection.SectionLocalBox += InterpVert.Position;
+									NewSection.SectionLocalBox += InterpPos;
 
 									// Save vert index for this poly
 									check(NumFinalVerts < 4);
@@ -978,8 +1030,8 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 									// If desired, add to the poly for the other half as well
 									if (NewOtherSection != nullptr)
 									{
-										int32 OtherInterpVertIndex = NewOtherSection->ProcVertexBuffer.Add(InterpVert);
-										NewOtherSection->SectionLocalBox += InterpVert.Position;
+										int32 OtherInterpVertIndex = VisMeshInterpolateVertex(NewOtherSection->Data, BaseSection->Data, BaseV[ThisVert], BaseV[NextVert], FMath::Clamp(Alpha, 0.0f, 1.0f));
+										NewOtherSection->SectionLocalBox += InterpPos;
 										check(NumOtherFinalVerts < 4);
 										OtherFinalVerts[NumOtherFinalVerts++] = OtherInterpVertIndex;
 									}
@@ -988,11 +1040,11 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 									check(ClippedEdges < 2);
 									if (ClippedEdges == 0)
 									{
-										NewClipEdge.V0 = (FVector3f)InterpVert.Position;
+										NewClipEdge.V0 = (FVector3f)InterpPos;
 									}
 									else
 									{
-										NewClipEdge.V1 = (FVector3f)InterpVert.Position;
+										NewClipEdge.V1 = (FVector3f)InterpPos;
 									}
 
 									ClippedEdges++;
@@ -1002,9 +1054,9 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 							// Triangulate the clipped polygon.
 							for (int32 VertexIndex = 2; VertexIndex < NumFinalVerts; VertexIndex++)
 							{
-								NewSection.ProcIndexBuffer.Add(FinalVerts[0]);
-								NewSection.ProcIndexBuffer.Add(FinalVerts[VertexIndex - 1]);
-								NewSection.ProcIndexBuffer.Add(FinalVerts[VertexIndex]);
+								NewSection.Data.Triangles.Add(FinalVerts[0]);
+								NewSection.Data.Triangles.Add(FinalVerts[VertexIndex - 1]);
+								NewSection.Data.Triangles.Add(FinalVerts[VertexIndex]);
 							}
 
 							// If we are making the other half, triangulate that as well
@@ -1012,9 +1064,9 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 							{
 								for (int32 VertexIndex = 2; VertexIndex < NumOtherFinalVerts; VertexIndex++)
 								{
-									NewOtherSection->ProcIndexBuffer.Add(OtherFinalVerts[0]);
-									NewOtherSection->ProcIndexBuffer.Add(OtherFinalVerts[VertexIndex - 1]);
-									NewOtherSection->ProcIndexBuffer.Add(OtherFinalVerts[VertexIndex]);
+									NewOtherSection->Data.Triangles.Add(OtherFinalVerts[0]);
+									NewOtherSection->Data.Triangles.Add(OtherFinalVerts[VertexIndex - 1]);
+									NewOtherSection->Data.Triangles.Add(OtherFinalVerts[VertexIndex]);
 								}
 							}
 
@@ -1029,13 +1081,13 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 					}
 
 					// Remove 'other' section from array if no valid geometry for it
-					if (NewOtherSection != nullptr && (NewOtherSection->ProcIndexBuffer.Num() == 0 || NewOtherSection->ProcVertexBuffer.Num() == 0))
+					if (NewOtherSection != nullptr && (NewOtherSection->Data.Triangles.Num() == 0 || NewOtherSection->Data.Positions.Num() == 0))
 					{
 						OtherSections.RemoveAt(OtherSections.Num() - 1);
 					}
 
 					// If we have some valid geometry, update section
-					if (NewSection.ProcIndexBuffer.Num() > 0 && NewSection.ProcVertexBuffer.Num() > 0)
+					if (NewSection.Data.Triangles.Num() > 0 && NewSection.Data.Positions.Num() > 0)
 					{
 						// Assign new geom to this section
 						InProcMesh->SetVisMeshSection(SectionIndex, NewSection);
@@ -1076,8 +1128,8 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 			FGeomTools::Buid2DPolysFromEdges(PolySet.Polys, Edges2D, FColor(255, 255, 255, 255));
 
 			// Remember start point for vert and index buffer before adding and cap geom
-			int32 CapVertBase = CapSection.ProcVertexBuffer.Num();
-			int32 CapIndexBase = CapSection.ProcIndexBuffer.Num();
+			int32 CapVertBase = CapSection.Data.Positions.Num();
+			int32 CapIndexBase = CapSection.Data.Triangles.Num();
 
 			// Triangulate each poly
 			for (int32 PolyIdx = 0; PolyIdx < PolySet.Polys.Num(); PolyIdx++)
@@ -1086,13 +1138,13 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 				FGeomTools::GeneratePlanarTilingPolyUVs(PolySet.Polys[PolyIdx], 64.f);
 
 				// Remember start of vert buffer before adding triangles for this poly
-				int32 PolyVertBase = CapSection.ProcVertexBuffer.Num();
+				int32 PolyVertBase = CapSection.Data.Positions.Num();
 
-				// Transform from 2D poly verts to 3D
-				VisMeshTransform2DPolygonTo3D(PolySet.Polys[PolyIdx], PolySet.PolyToWorld, CapSection.ProcVertexBuffer, CapSection.SectionLocalBox);
+				// Transform from 2D poly verts to 3D (Updated SOA version)
+				VisMeshTransform2DPolygonTo3D(PolySet.Polys[PolyIdx], PolySet.PolyToWorld, CapSection.Data, CapSection.SectionLocalBox);
 
-				// Triangulate this polygon
-				VisMeshTriangulatePoly(CapSection.ProcIndexBuffer, CapSection.ProcVertexBuffer, PolyVertBase, (FVector3f)LocalPlaneNormal);
+				// Triangulate this polygon (Updated SOA version)
+				VisMeshTriangulatePoly(CapSection.Data.Triangles, CapSection.Data, PolyVertBase, (FVector3f)LocalPlaneNormal);
 			}
 
 			// Set geom for cap section
@@ -1117,33 +1169,39 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 				OtherCapSection = &OtherSections.Last();
 
 				// Remember current base index for verts in 'other cap section'
-				int32 OtherCapVertBase = OtherCapSection->ProcVertexBuffer.Num();
+				int32 OtherCapVertBase = OtherCapSection->Data.Positions.Num();
 
 				// Copy verts from cap section into other cap section
-				for (int32 VertIdx = CapVertBase; VertIdx < CapSection.ProcVertexBuffer.Num(); VertIdx++)
+				for (int32 VertIdx = CapVertBase; VertIdx < CapSection.Data.Positions.Num(); VertIdx++)
 				{
-					FVisMeshVertex OtherCapVert = CapSection.ProcVertexBuffer[VertIdx];
-
-					// Flip normal and tangent TODO: FlipY?
-					OtherCapVert.Normal *= -1.f;
-					OtherCapVert.Tangent.TangentX *= -1.f;
-
-					// Add to other cap v buffer
-					OtherCapSection->ProcVertexBuffer.Add(OtherCapVert);
+					// Copy using SOA Helper
+					int32 NewIdx = VisMeshCopyVertex(OtherCapSection->Data, CapSection.Data, VertIdx);
+					
+					// Flip normal and tangent
+					// Note: We can access directly since CopyVertex ensures they exist if source exists
+					if (OtherCapSection->Data.Normals.IsValidIndex(NewIdx))
+					{
+						OtherCapSection->Data.Normals[NewIdx] *= -1.f;
+					}
+					if (OtherCapSection->Data.Tangents.IsValidIndex(NewIdx))
+					{
+						OtherCapSection->Data.Tangents[NewIdx].TangentX *= -1.f;
+					}
+					
 					// And update bounding box
-					OtherCapSection->SectionLocalBox += OtherCapVert.Position;
+					OtherCapSection->SectionLocalBox += OtherCapSection->Data.Positions[NewIdx];
 				}
 
 				// Find offset between main cap verts and other cap verts
 				int32 VertOffset = OtherCapVertBase - CapVertBase;
 
 				// Copy indices over as well
-				for (int32 IndexIdx = CapIndexBase; IndexIdx < CapSection.ProcIndexBuffer.Num(); IndexIdx += 3)
+				for (int32 IndexIdx = CapIndexBase; IndexIdx < CapSection.Data.Triangles.Num(); IndexIdx += 3)
 				{
 					// Need to offset and change winding
-					OtherCapSection->ProcIndexBuffer.Add(CapSection.ProcIndexBuffer[IndexIdx + 0] + VertOffset);
-					OtherCapSection->ProcIndexBuffer.Add(CapSection.ProcIndexBuffer[IndexIdx + 2] + VertOffset);
-					OtherCapSection->ProcIndexBuffer.Add(CapSection.ProcIndexBuffer[IndexIdx + 1] + VertOffset);
+					OtherCapSection->Data.Triangles.Add(CapSection.Data.Triangles[IndexIdx + 0] + VertOffset);
+					OtherCapSection->Data.Triangles.Add(CapSection.Data.Triangles[IndexIdx + 2] + VertOffset);
+					OtherCapSection->Data.Triangles.Add(CapSection.Data.Triangles[IndexIdx + 1] + VertOffset);
 				}
 			}
 		}

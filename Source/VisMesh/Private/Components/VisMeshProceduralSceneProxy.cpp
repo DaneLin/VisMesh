@@ -5,6 +5,7 @@
 #include "Materials/MaterialRenderProxy.h"
 #include "PhysicsEngine/BodySetup.h"
 #include "Utils/VisMeshUtils.h"
+#include "Async/ParallelFor.h"
 
 //// FVisMeshProceduralSceneProxy
 
@@ -25,27 +26,55 @@ FVisMeshProceduralSceneProxy::FVisMeshProceduralSceneProxy(UVisMeshProceduralCom
 	for (int SectionIdx = 0; SectionIdx < NumSections; ++SectionIdx)
 	{
 		FVisMeshSection& SrcSection = Component->VisMeshSections[SectionIdx];
-		if (SrcSection.ProcIndexBuffer.Num() > 0 && SrcSection.ProcVertexBuffer.Num() > 0)
+		// 检查 SOA 数据是否有效 (Triangles 和 Positions 是必须的)
+		if (SrcSection.Data.Triangles.Num() > 0 && SrcSection.Data.Positions.Num() > 0)
 		{
 			FVisMeshProxySection* NewSection = new FVisMeshProxySection(GetScene().GetFeatureLevel());
 
-			// Copy data from vertex buffer
-			const int32 NumVerts = SrcSection.ProcVertexBuffer.Num();
-
-			// Allocate verts
+			const int32 NumVerts = SrcSection.Data.NumVertices();
+			
+			// 1. 预分配 DynamicMeshVertex 数组
 			TArray<FDynamicMeshVertex> Vertices;
 			Vertices.SetNumUninitialized(NumVerts);
-			// Copy verts
-			for (int VertIdx = 0; VertIdx < NumVerts; VertIdx++)
+
+			// 2. 使用 ParallelFor 将 SOA 转为 AOS (FDynamicMeshVertex)
+			// 这样可以充分利用多核加速初始数据的构建
+			const FVisMeshData& Data = SrcSection.Data;
+
+			ParallelFor(NumVerts, [&](int32 i)
 			{
-				const FVisMeshVertex& ProcVert = SrcSection.ProcVertexBuffer[VertIdx];
-				FDynamicMeshVertex& Vert = Vertices[VertIdx];
-				ConvertProcMeshToDynMeshVertex(Vert, ProcVert);
-			}
+				FDynamicMeshVertex& Vert = Vertices[i];
 
-			// Copy index buffer
-			NewSection->IndexBuffer.Indices = SrcSection.ProcIndexBuffer;
+				// Position
+				Vert.Position = (FVector3f)Data.Positions[i];
 
+				// Color (Optional)
+				Vert.Color = Data.Colors.IsValidIndex(i) ? Data.Colors[i] : FColor::White;
+
+				// Tangent Basis & Normal
+				// 需要计算切线空间 (TangentX, TangentY, TangentZ)
+				const FVector3f TangentX = Data.Tangents.IsValidIndex(i) ? (FVector3f)Data.Tangents[i].TangentX : FVector3f(1, 0, 0);
+				const FVector3f TangentZ = Data.Normals.IsValidIndex(i) ? (FVector3f)Data.Normals[i] : FVector3f(0, 0, 1);
+				const bool bFlipTangentY = Data.Tangents.IsValidIndex(i) ? Data.Tangents[i].bFlipTangentY : false;
+				
+				Vert.TangentX = TangentX;
+				Vert.TangentZ = TangentZ;
+				// Calculate Binormal (TangentY) using cross product and flip sign
+				//Vert.TangentY = (TangentZ ^ TangentX) * (bFlipTangentY ? -1.f : 1.f);
+
+				// UVs (0-3)
+				Vert.TextureCoordinate[0] = Data.UV0.IsValidIndex(i) ? (FVector2f)Data.UV0[i] : FVector2f::ZeroVector;
+				Vert.TextureCoordinate[1] = Data.UV1.IsValidIndex(i) ? (FVector2f)Data.UV1[i] : FVector2f::ZeroVector;
+				Vert.TextureCoordinate[2] = Data.UV2.IsValidIndex(i) ? (FVector2f)Data.UV2[i] : FVector2f::ZeroVector;
+				Vert.TextureCoordinate[3] = Data.UV3.IsValidIndex(i) ? (FVector2f)Data.UV3[i] : FVector2f::ZeroVector;
+			});
+
+			// Copy index buffer (int32 -> uint32 conversion via Memcpy)
+			const int32 NumIndices = SrcSection.Data.Triangles.Num();
+			NewSection->IndexBuffer.Indices.SetNumUninitialized(NumIndices);
+			FMemory::Memcpy(NewSection->IndexBuffer.Indices.GetData(), SrcSection.Data.Triangles.GetData(), NumIndices * sizeof(uint32));
+
+			// Init Vertex Buffers
 			NewSection->VertexBuffers.InitFromDynamicVertex(&NewSection->VertexFactory, Vertices, 4);
 
 			// Enqueue initialization of render resource
@@ -100,55 +129,81 @@ void FVisMeshProceduralSceneProxy::UpdateSection_RenderThread(FRHICommandListBas
 			Sections[SectionData->TargetSection] != nullptr)
 		{
 			FVisMeshProxySection* Section = Sections[SectionData->TargetSection];
-			// Lock vertex buffer
-			const int32 NumVerts = SectionData->NewVertexBuffer.Num();
+			
+			// 获取 SOA 数据
+			const FVisMeshData& NewData = SectionData->Data;
+			const int32 NumVerts = NewData.NumVertices();
 
-			// Iterate through vertex data, copying in new info
-			for (int32 i = 0; i < NumVerts; i++)
+			// 确保顶点数匹配，否则无法仅更新 Buffer (需重建)
+			if (NumVerts == Section->VertexBuffers.PositionVertexBuffer.GetNumVertices())
 			{
-				const FVisMeshVertex& ProcVert = SectionData->NewVertexBuffer[i];
-				FDynamicMeshVertex Vertex;
-				ConvertProcMeshToDynMeshVertex(Vertex, ProcVert);
+				// --- 1. ParallelFor 更新 CPU 端数据容器 ---
+				// FPositionVertexBuffer 等类的 VertexPosition() 和 SetVertex...() 实际上是操作 CPU 内存
+				// 这里使用 ParallelFor 加速这些 CPU 内存的填充和数学计算 (如 PackedNormal 转换)
+				
+				ParallelFor(NumVerts, [&](int32 i)
+				{
+					// Update Position
+					Section->VertexBuffers.PositionVertexBuffer.VertexPosition(i) = (FVector3f)NewData.Positions[i];
 
-				Section->VertexBuffers.PositionVertexBuffer.VertexPosition(i) = Vertex.Position;
-				Section->VertexBuffers.StaticMeshVertexBuffer.SetVertexTangents(i, Vertex.TangentX.ToFVector3f(), Vertex.GetTangentY(), Vertex.TangentZ.ToFVector3f());
-				Section->VertexBuffers.StaticMeshVertexBuffer.SetVertexUV(i, 0, Vertex.TextureCoordinate[0]);
-				Section->VertexBuffers.StaticMeshVertexBuffer.SetVertexUV(i, 1, Vertex.TextureCoordinate[1]);
-				Section->VertexBuffers.StaticMeshVertexBuffer.SetVertexUV(i, 2, Vertex.TextureCoordinate[2]);
-				Section->VertexBuffers.StaticMeshVertexBuffer.SetVertexUV(i, 3, Vertex.TextureCoordinate[3]);
-				Section->VertexBuffers.ColorVertexBuffer.VertexColor(i) = Vertex.Color;
-			}
+					// Update Color
+					if (NewData.Colors.IsValidIndex(i))
+					{
+						Section->VertexBuffers.ColorVertexBuffer.VertexColor(i) = NewData.Colors[i];
+					}
 
-			{
-				auto& VertexBuffer = Section->VertexBuffers.PositionVertexBuffer;
-				void* VertexBufferData = RHICmdList.LockBuffer(VertexBuffer.VertexBufferRHI, 0,VertexBuffer.GetNumVertices() * VertexBuffer.GetStride(), RLM_WriteOnly);
-				FMemory::Memcpy(VertexBufferData, VertexBuffer.GetVertexData(),VertexBuffer.GetNumVertices() * VertexBuffer.GetStride());
-				RHICmdList.UnlockBuffer(VertexBuffer.VertexBufferRHI);
-			}
+					// Update Tangents & UVs
+					// 需要准备数据以填充 StaticMeshVertexBuffer
+					FVector3f TangentX = NewData.Tangents.IsValidIndex(i) ? (FVector3f)NewData.Tangents[i].TangentX : FVector3f(1, 0, 0);
+					FVector3f TangentZ = NewData.Normals.IsValidIndex(i) ? (FVector3f)NewData.Normals[i] : FVector3f(0, 0, 1);
+					bool bFlip = NewData.Tangents.IsValidIndex(i) ? NewData.Tangents[i].bFlipTangentY : false;
+					// 计算 BiNormal (TangentY)
+					FVector3f TangentY = (TangentZ ^ TangentX) * (bFlip ? -1.f : 1.f);
 
-			{
-				auto& VertexBuffer = Section->VertexBuffers.ColorVertexBuffer;
-				void* VertexBufferData = RHICmdList.LockBuffer(VertexBuffer.VertexBufferRHI, 0,VertexBuffer.GetNumVertices() * VertexBuffer.GetStride(), RLM_WriteOnly);
-				FMemory::Memcpy(VertexBufferData, VertexBuffer.GetVertexData(),VertexBuffer.GetNumVertices() * VertexBuffer.GetStride());
-				RHICmdList.UnlockBuffer(VertexBuffer.VertexBufferRHI);
-			}
+					// SetVertexTangents 是线程安全的，只要索引 i 不冲突
+					Section->VertexBuffers.StaticMeshVertexBuffer.SetVertexTangents(i, TangentX, TangentY, TangentZ);
 
-			{
-				auto& VertexBuffer = Section->VertexBuffers.StaticMeshVertexBuffer;
-				void* VertexBufferData = RHICmdList.LockBuffer(VertexBuffer.TangentsVertexBuffer.VertexBufferRHI, 0,VertexBuffer.GetTangentSize(), RLM_WriteOnly);
-				FMemory::Memcpy(VertexBufferData, VertexBuffer.GetTangentData(), VertexBuffer.GetTangentSize());
-				RHICmdList.UnlockBuffer(VertexBuffer.TangentsVertexBuffer.VertexBufferRHI);
-			}
+					// Update UVs
+					if (NewData.UV0.IsValidIndex(i)) Section->VertexBuffers.StaticMeshVertexBuffer.SetVertexUV(i, 0, (FVector2f)NewData.UV0[i]);
+					if (NewData.UV1.IsValidIndex(i)) Section->VertexBuffers.StaticMeshVertexBuffer.SetVertexUV(i, 1, (FVector2f)NewData.UV1[i]);
+					if (NewData.UV2.IsValidIndex(i)) Section->VertexBuffers.StaticMeshVertexBuffer.SetVertexUV(i, 2, (FVector2f)NewData.UV2[i]);
+					if (NewData.UV3.IsValidIndex(i)) Section->VertexBuffers.StaticMeshVertexBuffer.SetVertexUV(i, 3, (FVector2f)NewData.UV3[i]);
+				});
 
-			{
-				auto& VertexBuffer = Section->VertexBuffers.StaticMeshVertexBuffer;
-				void* VertexBufferData = RHICmdList.LockBuffer(VertexBuffer.TexCoordVertexBuffer.VertexBufferRHI, 0,VertexBuffer.GetTexCoordSize(), RLM_WriteOnly);
-				FMemory::Memcpy(VertexBufferData, VertexBuffer.GetTexCoordData(), VertexBuffer.GetTexCoordSize());
-				RHICmdList.UnlockBuffer(VertexBuffer.TexCoordVertexBuffer.VertexBufferRHI);
+				// --- 2. 提交到 GPU (RHI Unlock & Memcpy) ---
+				// 这些操作必须在 RenderThread 串行执行，但由于 CPU 数据已准备好，这里只是纯粹的 Memcpy
+
+				{
+					auto& VertexBuffer = Section->VertexBuffers.PositionVertexBuffer;
+					void* VertexBufferData = RHICmdList.LockBuffer(VertexBuffer.VertexBufferRHI, 0, VertexBuffer.GetNumVertices() * VertexBuffer.GetStride(), RLM_WriteOnly);
+					FMemory::Memcpy(VertexBufferData, VertexBuffer.GetVertexData(), VertexBuffer.GetNumVertices() * VertexBuffer.GetStride());
+					RHICmdList.UnlockBuffer(VertexBuffer.VertexBufferRHI);
+				}
+
+				{
+					auto& VertexBuffer = Section->VertexBuffers.ColorVertexBuffer;
+					void* VertexBufferData = RHICmdList.LockBuffer(VertexBuffer.VertexBufferRHI, 0, VertexBuffer.GetNumVertices() * VertexBuffer.GetStride(), RLM_WriteOnly);
+					FMemory::Memcpy(VertexBufferData, VertexBuffer.GetVertexData(), VertexBuffer.GetNumVertices() * VertexBuffer.GetStride());
+					RHICmdList.UnlockBuffer(VertexBuffer.VertexBufferRHI);
+				}
+
+				{
+					auto& VertexBuffer = Section->VertexBuffers.StaticMeshVertexBuffer;
+					// Update Tangents Buffer
+					void* TangentBufferData = RHICmdList.LockBuffer(VertexBuffer.TangentsVertexBuffer.VertexBufferRHI, 0, VertexBuffer.GetTangentSize(), RLM_WriteOnly);
+					FMemory::Memcpy(TangentBufferData, VertexBuffer.GetTangentData(), VertexBuffer.GetTangentSize());
+					RHICmdList.UnlockBuffer(VertexBuffer.TangentsVertexBuffer.VertexBufferRHI);
+					
+					// Update UV Buffer
+					void* TexCoordBufferData = RHICmdList.LockBuffer(VertexBuffer.TexCoordVertexBuffer.VertexBufferRHI, 0, VertexBuffer.GetTexCoordSize(), RLM_WriteOnly);
+					FMemory::Memcpy(TexCoordBufferData, VertexBuffer.GetTexCoordData(), VertexBuffer.GetTexCoordSize());
+					RHICmdList.UnlockBuffer(VertexBuffer.TexCoordVertexBuffer.VertexBufferRHI);
+				}
 			}
 		}
 
 		// Free data sent from game thread
+		// 注意：Data 中包含的 TArray 内存也会在此处析构
 		delete SectionData;
 	}
 }

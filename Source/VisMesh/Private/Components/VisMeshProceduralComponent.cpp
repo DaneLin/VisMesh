@@ -6,6 +6,7 @@
 #include "RenderBase/VisMeshRenderResources.h"
 #include "RenderBase/VisMeshSceneProxyBase.h"
 #include "PhysicsEngine/BodySetup.h"
+#include "Async/ParallelFor.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(VisMeshProceduralComponent)
 
@@ -19,93 +20,174 @@ void UVisMeshProceduralComponent::CreateMeshSection(int32 SectionIndex, const TA
 {
 	SCOPE_CYCLE_COUNTER(STAT_VisMesh_CreateMeshSection);
 
-	// Ensure sections array is long enough
+	// 构造 SOA 数据
+	FVisMeshData NewData;
+	const int32 NumVerts = Vertices.Num();
+	
+	// 1. 直接内存拷贝 (Move Semantics 无法用于 const引用，但 TArray Copy 也是极快的 Memcpy)
+	NewData.Positions = Vertices;
+	NewData.Triangles = Triangles;
+	
+	// 2. 使用 ParallelFor 处理可能的缺失数据或默认值填充
+	// Normals
+	if (Normals.Num() == NumVerts) NewData.Normals = Normals;
+	else {
+		NewData.Normals.SetNumUninitialized(NumVerts);
+		ParallelFor(NumVerts, [&](int32 i) { NewData.Normals[i] = FVector(0, 0, 1); });
+	}
+
+	// UV0
+	if (UV0.Num() == NumVerts) NewData.UV0 = UV0;
+	else NewData.UV0.SetNumZeroed(NumVerts);
+
+	// UV1
+	if (UV1.Num() == NumVerts) NewData.UV1 = UV1;
+	else NewData.UV1.SetNumZeroed(NumVerts);
+
+	// UV2
+	if (UV2.Num() == NumVerts) NewData.UV2 = UV2;
+	else NewData.UV2.SetNumZeroed(NumVerts);
+
+	// UV3
+	if (UV3.Num() == NumVerts) NewData.UV3 = UV3;
+	else NewData.UV3.SetNumZeroed(NumVerts);
+
+	if (VertexColors.Num() == NumVerts) NewData.Colors = VertexColors;
+	else 
+	{
+		NewData.Colors.SetNumUninitialized(NumVerts);
+		// 并行填充默认白色
+		ParallelFor(NumVerts, [&](int32 i) { NewData.Colors[i] = FColor::White; });
+	}
+
+	if (Tangents.Num() == NumVerts) NewData.Tangents = Tangents;
+	else NewData.Tangents.SetNumZeroed(NumVerts);
+	
+	// 调用高效的 Move 版本
+	CreateMeshSection(SectionIndex, MoveTemp(NewData), bCreateCollision);
+}
+
+void UVisMeshProceduralComponent::CreateMeshSection(int32 SectionIndex, const FVisMeshData& MeshData,
+	bool bCreateCollision)
+{
+	FVisMeshData TempData = MeshData;
+	CreateMeshSection(SectionIndex, MoveTemp(TempData), bCreateCollision);
+}
+
+void UVisMeshProceduralComponent::CreateMeshSection(int32 SectionIndex, FVisMeshData&& MeshData, bool bCreateCollision)
+{
+	SCOPE_CYCLE_COUNTER(STAT_VisMesh_CreateMeshSection);
+
 	if (SectionIndex >= VisMeshSections.Num())
 	{
 		VisMeshSections.SetNum(SectionIndex + 1, false);
 	}
-
-	// Reset this section (in case it already existed)
 	FVisMeshSection& NewSection = VisMeshSections[SectionIndex];
-	NewSection.Reset();
 
-	// Copy data to vertex buffer
-	const int32 NumVerts = Vertices.Num();
-	NewSection.ProcVertexBuffer.Reset();
-	NewSection.ProcVertexBuffer.AddUninitialized(NumVerts);
-	for (int32 VertIdx = 0; VertIdx < NumVerts; VertIdx++)
+	// 核心优化：Move 接管内存
+	// MeshData 的内部指针直接转移给 NewSection.Data，原 MeshData 变空
+	NewSection.Data = MoveTemp(MeshData);
+
+	// 2. 数据补齐 (保持 SOA 长度一致)
+	const int32 NumVerts = NewSection.Data.NumVertices();
+	auto& D = NewSection.Data; // 简写
+
+	if (D.Normals.Num() != NumVerts) D.Normals.Init(FVector(0, 0, 1), NumVerts);
+	if (D.Colors.Num() != NumVerts) D.Colors.Init(FColor::White, NumVerts);
+	if (D.Tangents.Num() != NumVerts) D.Tangents.Init(FVisMeshTangent(), NumVerts);
+	if (D.UV0.Num() != NumVerts) D.UV0.Init(FVector2D::ZeroVector, NumVerts);
+	if (D.UV1.Num() != NumVerts) D.UV1.Init(FVector2D::ZeroVector, NumVerts);
+	if (D.UV2.Num() != NumVerts) D.UV2.Init(FVector2D::ZeroVector, NumVerts);
+	if (D.UV3.Num() != NumVerts) D.UV3.Init(FVector2D::ZeroVector, NumVerts);
+
+	// 3. 计算 Bounds (直接读 Data.Positions)
+	NewSection.SectionLocalBox = FBox(D.Positions);
+	NewSection.bEnableCollision = bCreateCollision;
+
+	// 4. 触发后续更新
+	UpdateLocalBounds();
+	UpdateCollision();
+	MarkRenderStateDirty();
+}
+
+void UVisMeshProceduralComponent::UpdateMeshSection(int32 SectionIndex, const FVisMeshData& MeshData)
+{
+	FVisMeshData TempData = MeshData; 
+	UpdateMeshSection(SectionIndex, MoveTemp(TempData));
+}
+
+void UVisMeshProceduralComponent::UpdateMeshSection(int32 SectionIndex, FVisMeshData&& MeshData)
+{
+	SCOPE_CYCLE_COUNTER(STAT_VisMesh_UpdateSectionGT);
+
+	if (!VisMeshSections.IsValidIndex(SectionIndex)) return;
+
+	FVisMeshSection& Section = VisMeshSections[SectionIndex];
+	const int32 NumVerts = Section.Data.NumVertices();
+
+	// 安全检查
+	if (NumVerts == 0) return;
+
+	// --- 1. 更新内部数据 (Selective Move) ---
+	// 如果 InputData 提供了某个数组，且长度匹配，则 Move 过来替换旧的
+	// 这样用户只需填充 FVisMeshData 中需要更新的字段 (比如只填 Positions)
+	bool bPositionsChanged = false;
+
+	if (MeshData.Positions.Num() == NumVerts)
 	{
-		FVisMeshVertex& Vertex = NewSection.ProcVertexBuffer[VertIdx];
-
-		Vertex.Position = Vertices[VertIdx];
-		Vertex.Normal = (Normals.Num() == NumVerts) ? Normals[VertIdx] : FVector(0.f, 0.f, 1.f);
-		Vertex.UV0 = (UV0.Num() == NumVerts) ? UV0[VertIdx] : FVector2D(0.f, 0.f);
-		Vertex.UV1 = (UV1.Num() == NumVerts) ? UV1[VertIdx] : FVector2D(0.f, 0.f);
-		Vertex.UV2 = (UV2.Num() == NumVerts) ? UV2[VertIdx] : FVector2D(0.f, 0.f);
-		Vertex.UV3 = (UV3.Num() == NumVerts) ? UV3[VertIdx] : FVector2D(0.f, 0.f);
-		Vertex.Color = (VertexColors.Num() == NumVerts) ? VertexColors[VertIdx] : FColor(255, 255, 255);
-		Vertex.Tangent = (Tangents.Num() == NumVerts) ? Tangents[VertIdx] : FVisMeshTangent();
-
-		// Update bounding box
-		NewSection.SectionLocalBox += Vertex.Position;
+		Section.Data.Positions = MoveTemp(MeshData.Positions);
+		bPositionsChanged = true;
 	}
+	if (MeshData.Normals.Num() == NumVerts)   Section.Data.Normals   = MoveTemp(MeshData.Normals);
+	if (MeshData.Colors.Num() == NumVerts)    Section.Data.Colors    = MoveTemp(MeshData.Colors);
+	if (MeshData.Tangents.Num() == NumVerts)  Section.Data.Tangents  = MoveTemp(MeshData.Tangents);
+	if (MeshData.UV0.Num() == NumVerts)       Section.Data.UV0       = MoveTemp(MeshData.UV0);
+	if (MeshData.UV1.Num() == NumVerts)       Section.Data.UV1       = MoveTemp(MeshData.UV1);
+	if (MeshData.UV2.Num() == NumVerts)       Section.Data.UV2       = MoveTemp(MeshData.UV2);
+	if (MeshData.UV3.Num() == NumVerts)       Section.Data.UV3       = MoveTemp(MeshData.UV3);
 
-	// Get triangle indices, clamping to vertex range
-	const int32 MaxIndex = NumVerts - 1;
-	const auto GetTriIndices = [&Triangles, MaxIndex](int32 Idx)
+	if (bPositionsChanged)
 	{
-		return TTuple<int32, int32, int32>(FMath::Min(Triangles[Idx], MaxIndex),
-		                                   FMath::Min(Triangles[Idx + 1], MaxIndex),
-		                                   FMath::Min(Triangles[Idx + 2], MaxIndex));
-	};
-
-	const int32 NumTriIndices = (Triangles.Num() / 3) * 3; // Ensure number of triangle indices is multiple of three
-
-	// Detect degenerate triangles, i.e. non-unique vertex indices within the same triangle
-	int32 NumDegenerateTriangles = 0;
-	for (int32 IndexIdx = 0; IndexIdx < NumTriIndices; IndexIdx += 3)
-	{
-		int32 a, b, c;
-		Tie(a, b, c) = GetTriIndices(IndexIdx);
-		NumDegenerateTriangles += a == b || a == c || b == c;
-	}
-	if (NumDegenerateTriangles > 0)
-	{
-		UE_LOG(LogVisComponent, Warning,
-		       TEXT(
-			       "Detected %d degenerate triangle%s with non-unique vertex indices for created mesh section in '%s'; degenerate triangles will be dropped."
-		       ),
-		       NumDegenerateTriangles, NumDegenerateTriangles > 1 ? TEXT("s") : TEXT(""), *GetFullName());
-	}
-
-	// Copy index buffer for non-degenerate triangles
-	NewSection.ProcIndexBuffer.Reset();
-	NewSection.ProcIndexBuffer.AddUninitialized(NumTriIndices - NumDegenerateTriangles * 3);
-	int32 CopyIndexIdx = 0;
-	for (int32 IndexIdx = 0; IndexIdx < NumTriIndices; IndexIdx += 3)
-	{
-		int32 a, b, c;
-		Tie(a, b, c) = GetTriIndices(IndexIdx);
-
-		if (a != b && a != c && b != c)
+		Section.SectionLocalBox = FBox(Section.Data.Positions);
+		UpdateLocalBounds();
+		if (Section.bEnableCollision)
 		{
-			NewSection.ProcIndexBuffer[CopyIndexIdx++] = a;
-			NewSection.ProcIndexBuffer[CopyIndexIdx++] = b;
-			NewSection.ProcIndexBuffer[CopyIndexIdx++] = c;
+			BodyInstance.UpdateTriMeshVertices(Section.Data.Positions);
+		}
+	}
+
+	// --- 2. 物理更新 (直接引用) ---
+	if (Section.bEnableCollision)
+	{
+		// 直接传递 Section.Data.Positions
+		if (VisMeshSections.Num() == 1)
+		{
+			BodyInstance.UpdateTriMeshVertices(Section.Data.Positions);
 		}
 		else
 		{
-			--NumDegenerateTriangles;
+			// 多 Section 情况的 Append 逻辑...
+			TArray<FVector> AllPos;
+			for(auto& S : VisMeshSections) if(S.bEnableCollision) AllPos.Append(S.Data.Positions);
+			BodyInstance.UpdateTriMeshVertices(AllPos);
 		}
 	}
-	check(NumDegenerateTriangles == 0);
-	check(CopyIndexIdx == NewSection.ProcIndexBuffer.Num());
 
-	NewSection.bEnableCollision = bCreateCollision;
+	// --- 3. 生成 RenderData (ParallelFor) ---
+	if (SceneProxy && !IsRenderStateDirty())
+	{
+		FVisMeshSectionUpdateData* SectionData = new FVisMeshSectionUpdateData;
+		SectionData->TargetSection = SectionIndex;
+		SectionData->Data = Section.Data; // Copy
 
-	UpdateLocalBounds(); // Update overall bounds
-	UpdateCollision(); // Mark collision as dirty
-	MarkRenderStateDirty(); // New section requires recreating scene proxy
+		FVisMeshProceduralSceneProxy* ProcMeshSceneProxy = (FVisMeshProceduralSceneProxy*)SceneProxy;
+		ENQUEUE_RENDER_COMMAND(FVisMeshSectionUpdate)
+		([ProcMeshSceneProxy, SectionData](FRHICommandListImmediate& RHICmdList)
+		{
+			ProcMeshSceneProxy->UpdateSection_RenderThread(RHICmdList, SectionData);
+		});
+	}
+	MarkRenderTransformDirty();
 }
 
 void UVisMeshProceduralComponent::CreateMeshSection_LinearColor(int32 SectionIndex, const TArray<FVector>& Vertices,const TArray<int32>& Triangles, const TArray<FVector>& Normals,const TArray<FVector2D>& UV0,const TArray<FVector2D>& UV1, const TArray<FVector2D>& UV2,const TArray<FVector2D>& UV3,const TArray<FLinearColor>& VertexColors,const TArray<FVisMeshTangent>& Tangents, bool bCreateCollision,bool bSRGBConversion)
@@ -114,12 +196,12 @@ void UVisMeshProceduralComponent::CreateMeshSection_LinearColor(int32 SectionInd
 	TArray<FColor> Colors;
 	if (VertexColors.Num() > 0)
 	{
-		Colors.SetNum(VertexColors.Num());
-
-		for (int32 ColorIdx = 0; ColorIdx < VertexColors.Num(); ColorIdx++)
+		Colors.SetNumUninitialized(VertexColors.Num());
+		// ParallelFor 加速颜色转换
+		ParallelFor(VertexColors.Num(), [&](int32 i)
 		{
-			Colors[ColorIdx] = VertexColors[ColorIdx].ToFColor(bSRGBConversion);
-		}
+			Colors[i] = VertexColors[i].ToFColor(bSRGBConversion);
+		});
 	}
 
 	CreateMeshSection(SectionIndex, Vertices, Triangles, Normals, UV0, UV1, UV2, UV3, Colors, Tangents, bCreateCollision);
@@ -129,118 +211,80 @@ void UVisMeshProceduralComponent::UpdateMeshSection(int32 SectionIndex, const TA
 {
 	SCOPE_CYCLE_COUNTER(STAT_VisMesh_UpdateSectionGT);
 
-	if (SectionIndex < VisMeshSections.Num())
+	if (SectionIndex >= VisMeshSections.Num()) return;
+
+	FVisMeshSection& Section = VisMeshSections[SectionIndex];
+	const int32 NumVerts = Section.Data.NumVertices();
+
+	// 安全检查
+	if (NumVerts == 0) return;
+	if (Vertices.Num() > 0 && Vertices.Num() != NumVerts)
 	{
-		FVisMeshSection& Section = VisMeshSections[SectionIndex];
-		const int32 NumVerts = Vertices.Num();
-		const int32 PreviousNumVerts = Section.ProcVertexBuffer.Num();
+		UE_LOG(LogVisComponent, Error, TEXT("UpdateMeshSection vertex count mismatch."));
+		return;
+	}
 
-		// See if positions are changing
-		const bool bSameVertexCount = PreviousNumVerts == NumVerts;
+	bool bPositionsChanged = false;
 
-		if (bSameVertexCount)
+	if (Vertices.Num() == NumVerts)
+	{
+		Section.Data.Positions = Vertices;
+		bPositionsChanged = true;
+	}
+	if (Normals.Num() == NumVerts) Section.Data.Normals = Normals;
+	if (VertexColors.Num() == NumVerts) Section.Data.Colors = VertexColors;
+	if (Tangents.Num() == NumVerts) Section.Data.Tangents = Tangents;
+	if (UV0.Num() == NumVerts) Section.Data.UV0 = UV0;
+	if (UV1.Num() == NumVerts) Section.Data.UV1 = UV1;
+	if (UV2.Num() == NumVerts) Section.Data.UV2 = UV2;
+	if (UV3.Num() == NumVerts) Section.Data.UV3 = UV3;
+
+	// 如果位置改变，需要更新 Bounds 和 Physics
+	if (bPositionsChanged)
+	{
+		Section.SectionLocalBox = FBox(Section.Data.Positions);
+		UpdateLocalBounds();
+
+		if (Section.bEnableCollision)
 		{
-			Section.SectionLocalBox = Vertices.Num() ? FBox(Vertices) : FBox(ForceInit);
-
-			// Iterate through vertex data, copying in new info
-			for (int32 VertIdx = 0; VertIdx < NumVerts; ++VertIdx)
+			// 直接传递 Positions 数组，无需像 AOS 那样提取
+			if (VisMeshSections.Num() == 1)
 			{
-				FVisMeshVertex& ModifyVert = Section.ProcVertexBuffer[VertIdx];
-
-				// Position data
-				if (Vertices.Num() == NumVerts)
-				{
-					ModifyVert.Position = Vertices[VertIdx];
-				}
-
-				// Normal data
-				if (Normals.Num() == NumVerts)
-				{
-					ModifyVert.Normal = Normals[VertIdx];
-				}
-
-				// Tangent data
-				if (Tangents.Num() == NumVerts)
-				{
-					ModifyVert.Tangent = Tangents[VertIdx];
-				}
-
-				// UV0 data
-				if (UV0.Num() == NumVerts)
-				{
-					ModifyVert.UV0 = UV0[VertIdx];
-				}
-				// UV1 data
-				if (UV1.Num() == NumVerts)
-				{
-					ModifyVert.UV1 = UV1[VertIdx];
-				}
-				// UV2 data
-				if (UV2.Num() == NumVerts)
-				{
-					ModifyVert.UV2 = UV2[VertIdx];
-				}
-				// UV3 data
-				if (UV3.Num() == NumVerts)
-				{
-					ModifyVert.UV3 = UV3[VertIdx];
-				}
-
-				// Color data
-				if (VertexColors.Num() == NumVerts)
-				{
-					ModifyVert.Color = VertexColors[VertIdx];
-				}
+				BodyInstance.UpdateTriMeshVertices(Section.Data.Positions);
 			}
-
-			// If we have collision enabled on this section, update that too
-			if (Section.bEnableCollision)
+			else
 			{
-				TArray<FVector> CollisionPositions;
-
-				// We have one collision mesh for all sections, so need to build array of _all_ positions
-				for (const FVisMeshSection& CollisionSection : VisMeshSections)
+				// 多 Section 需要合并
+				TArray<FVector> AllPos;
+				for (auto& S : VisMeshSections)
 				{
-					// If section has collision, copy it
-					if (CollisionSection.bEnableCollision)
-					{
-						for (int32 VertIdx = 0; VertIdx < CollisionSection.ProcVertexBuffer.Num(); VertIdx++)
-						{
-							CollisionPositions.Add(CollisionSection.ProcVertexBuffer[VertIdx].Position);
-						}
-					}
+					if (S.bEnableCollision) AllPos.Append(S.Data.Positions);
 				}
-
-				// Pass new positions to trimesh
-				BodyInstance.UpdateTriMeshVertices(CollisionPositions);
+				BodyInstance.UpdateTriMeshVertices(AllPos);
 			}
-
-			// If we have a valid proxy and it is not pending recreation
-			if (SceneProxy && !IsRenderStateDirty())
-			{
-				// Create data to update section
-				FVisMeshSectionUpdateData* SectionData = new FVisMeshSectionUpdateData;
-				SectionData->TargetSection = SectionIndex;
-				SectionData->NewVertexBuffer = Section.ProcVertexBuffer;
-
-				// // Enqueue command to send to render thread
-				FVisMeshProceduralSceneProxy* ProcMeshSceneProxy = (FVisMeshProceduralSceneProxy*)SceneProxy;
-				ENQUEUE_RENDER_COMMAND(FVisMeshSectionUpdate)
-				([ProcMeshSceneProxy, SectionData](FRHICommandListImmediate& RHICmdList)
-				{
-					ProcMeshSceneProxy->UpdateSection_RenderThread(RHICmdList, SectionData);
-				});
-				
-			}
-
-			UpdateLocalBounds(); // Update overall bounds
-			MarkRenderTransformDirty(); // Need to send new bounds to render thread
-		}
-		else
-		{
-			UE_LOG(LogVisComponent, Error,TEXT("Trying to update a procedural mesh component section with a different number of vertices [Previous: %i, New: %i] (clear and recreate mesh section instead)"), PreviousNumVerts, NumVerts);
 		}
 	}
+
+	if (SceneProxy && !IsRenderStateDirty())
+	{
+		// 构造 SOA 更新包
+		FVisMeshSectionUpdateData* SectionData = new FVisMeshSectionUpdateData;
+		SectionData->TargetSection = SectionIndex;
+		
+		// 深拷贝需要更新的数据到 RenderPayload
+		// 这里为了简化逻辑，拷贝整个 SOA 结构 (实际 TArray Copy-on-write 机制在跨线程时会发生深拷贝)
+		// 优化点：可以只拷贝修改过的数组，但在 RenderThread 处理会变复杂
+		SectionData->Data = Section.Data; 
+
+		FVisMeshProceduralSceneProxy* ProcMeshSceneProxy = (FVisMeshProceduralSceneProxy*)SceneProxy;
+		ENQUEUE_RENDER_COMMAND(FVisMeshSectionUpdate)
+		([ProcMeshSceneProxy, SectionData](FRHICommandListImmediate& RHICmdList)
+		{
+			ProcMeshSceneProxy->UpdateSection_RenderThread(RHICmdList, SectionData);
+		});
+	}
+
+	MarkRenderTransformDirty();
 }
 
 void UVisMeshProceduralComponent::UpdateMeshSection_LinearColor(int32 SectionIndex, const TArray<FVector>& Vertices,const TArray<FVector>& Normals, const TArray<FVector2D>& UV0,const TArray<FVector2D>& UV1,const TArray<FVector2D>& UV2, const TArray<FVector2D>& UV3,const TArray<FLinearColor>& VertexColors,const TArray<FVisMeshTangent>& Tangents, bool bSRGBConversion)
@@ -249,12 +293,12 @@ void UVisMeshProceduralComponent::UpdateMeshSection_LinearColor(int32 SectionInd
 	TArray<FColor> Colors;
 	if (VertexColors.Num() > 0)
 	{
-		Colors.SetNum(VertexColors.Num());
-
-		for (int32 ColorIdx = 0; ColorIdx < VertexColors.Num(); ColorIdx++)
+		Colors.SetNumUninitialized(VertexColors.Num());
+		// ParallelFor 优化颜色转换
+		ParallelFor(VertexColors.Num(), [&](int32 i)
 		{
-			Colors[ColorIdx] = VertexColors[ColorIdx].ToFColor(bSRGBConversion);
-		}
+			Colors[i] = VertexColors[i].ToFColor(bSRGBConversion);
+		});
 	}
 
 	UpdateMeshSection(SectionIndex, Vertices, Normals, UV0, UV1, UV2, UV3, Colors, Tangents);
@@ -409,22 +453,6 @@ void UVisMeshProceduralComponent::SetVisMeshSection(int32 SectionIndex, const FV
 	UpdateCollision(); // Mark collision as dirty
 	MarkRenderStateDirty(); // New section requires recreating scene proxy
 }
-#if WITH_EDITOR
-void UVisMeshProceduralComponent::PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent)
-{
-	Super::PostEditChangeProperty(PropertyChangedEvent);
-
-	if (!PropertyChangedEvent.Property)
-	{
-		return;
-	}
-
-	if (PropertyChangedEvent.Property->GetFName() == GET_MEMBER_NAME_CHECKED(UVisMeshProceduralComponent, bUseInstance))
-	{
-		MarkRenderStateDirty();
-	}
-}
-#endif
 
 FPrimitiveSceneProxy* UVisMeshProceduralComponent::CreateSceneProxy()
 {
@@ -446,24 +474,21 @@ UMaterialInterface* UVisMeshProceduralComponent::GetMaterialFromCollisionFaceInd
 
 	if (FaceIndex >= 0)
 	{
-		// Look for element that corresponds to the supplied face
 		int32 TotalFaceCount = 0;
 		for (int32 SectionIdx = 0; SectionIdx < VisMeshSections.Num(); SectionIdx++)
 		{
 			const FVisMeshSection& Section = VisMeshSections[SectionIdx];
-			int32 NumFaces = Section.ProcIndexBuffer.Num() / 3;
+			int32 NumFaces = Section.Data.Triangles.Num() / 3; // SOA change
 			TotalFaceCount += NumFaces;
 
 			if (FaceIndex < TotalFaceCount)
 			{
-				// Grab the material
 				Result = GetMaterial(SectionIdx);
 				SectionIndex = SectionIdx;
 				break;
 			}
 		}
 	}
-
 	return Result;
 }
 

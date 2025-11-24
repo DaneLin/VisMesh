@@ -9,19 +9,6 @@
 // ------------------------Utils---------------------------
 // --------------------------------------------------------
 
-void ConvertProcMeshToDynMeshVertex(FDynamicMeshVertex& Vert, const FVisMeshVertex& ProcVert)
-{
-	Vert.Position = static_cast<FVector3f>(ProcVert.Position);
-	Vert.Color = ProcVert.Color;
-	Vert.TextureCoordinate[0] = FVector2f(ProcVert.UV0); // LWC_TODO: Precision loss
-	Vert.TextureCoordinate[1] = FVector2f(ProcVert.UV1); // LWC_TODO: Precision loss
-	Vert.TextureCoordinate[2] = FVector2f(ProcVert.UV2); // LWC_TODO: Precision loss
-	Vert.TextureCoordinate[3] = FVector2f(ProcVert.UV3); // LWC_TODO: Precision loss
-	Vert.TangentX = ProcVert.Tangent.TangentX;
-	Vert.TangentZ = ProcVert.Normal;
-	Vert.TangentZ.Vector.W = ProcVert.Tangent.bFlipTangentY ? -127 : 127;
-}
-
 void GetUnitCubeVertices(TArray<FVector3f>& OutVertices)
 {
 	OutVertices.Empty(36);

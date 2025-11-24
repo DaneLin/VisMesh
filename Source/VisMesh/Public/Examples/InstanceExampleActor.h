@@ -1,12 +1,12 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "InstanceActorExample.generated.h"
+#include "InstanceExampleActor.generated.h"
 
 class UVisMeshInstancedComponent;
 
 UCLASS(Placeable)
-class AInstanceActorExample : public AActor
+class AInstanceExampleActor : public AActor
 {
 	GENERATED_UCLASS_BODY()
 

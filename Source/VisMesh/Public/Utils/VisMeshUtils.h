@@ -7,11 +7,6 @@ static constexpr int32 GNumVertsPerBox = 36;
 ///
 //// Utils
 ///
-/** 
- *	Struct used to send update to mesh data 
- *	Arrays may be empty, in which case no update is performed.
- */
-static void ConvertProcMeshToDynMeshVertex(FDynamicMeshVertex& Vert, const FVisMeshVertex& ProcVert);
 
 // 辅助函数：生成单位立方体 (0,0,0 到 1,1,1) 的36个顶点
 static void GetUnitCubeVertices(TArray<FVector3f>& OutVertices);
