@@ -288,17 +288,21 @@ void FVisMeshInstancedSceneProxy::DispatchComputePass_RenderThread(FRDGBuilder& 
 		{
 			const FSceneView* MainView = ViewFamily.Views[0];
 
-			// --- 构建 World -> Clip 矩阵 ---
-			// 获取 Translated World -> Clip
+			// 1. 获取 "Translated World" -> "Clip" 矩阵
+			// (UE5 使用 LWC，渲染时会将世界原点移到摄像机附近，称为 Translated World)
 			FMatrix TranslatedViewProj = MainView->ViewMatrices.GetViewProjectionMatrix();
-			// 获取 PreViewTranslation
+            
+			// 2. 获取 PreViewTranslation (世界原点 -> Translated World 原点的位移)
 			FVector PreViewTranslation = MainView->ViewMatrices.GetPreViewTranslation();
-			// 合并平移: World -> Clip
-			FMatrix WorldToClip = FTranslationMatrix(PreViewTranslation) * TranslatedViewProj;
-			
-			// --- 合并为 Local -> Clip ---
-			// 注意乘法顺序: Vector * LocalToWorld * WorldToClip
-			ViewProjMatrix = GetLocalToWorld() * WorldToClip;
+            
+			// 3. 构建 "Local" -> "Translated World" 矩阵
+			// 逻辑：Local -> Absolute World -> (加上 PreViewTranslation) -> Translated World
+			// 注意乘法顺序：LocalToWorld * Translation
+			FMatrix LocalToTranslatedWorld = GetLocalToWorld() * FTranslationMatrix(PreViewTranslation);
+
+			// 4. 最终合并：Local -> Clip
+			// 逻辑：LocalToTranslatedWorld * TranslatedViewProj
+			ViewProjMatrix = LocalToTranslatedWorld * TranslatedViewProj;
 		}
 		FMatrix44f ViewProjectionMatrix = FMatrix44f(ViewProjMatrix.GetTransposed());
 		// 调用具体的 Pass 添加函数 (这个函数可以是静态的，或者 VisMeshUtils 里的)
