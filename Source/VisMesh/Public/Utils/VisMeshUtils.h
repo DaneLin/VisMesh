@@ -25,6 +25,10 @@ static void AddBoxChartInstancingPass(FRDGBuilder& GraphBuilder, FRHIUnorderedAc
 									  FRHIUnorderedAccessView* IndirectArgsBufferUAV, float InXSpace, float InYSpace,
 									  int32 InNumColumns, int32 InNumInstances, float InTime);
 
+static void AddBoxChartFrustumCulledInstancePass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* InstanceOriginBuffersUAV,
+									  FRHIUnorderedAccessView* InstanceTransformsUAV,
+									  FRDGBufferUAVRef IndirectArgsBufferUAV, float InXSpace, float InYSpace,
+									  int32 InNumColumns, int32 InNumInstances, float InTime, FMatrix44f InProjectionViewMatrix);
 
 
 static void AddBoxWireframePass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* PositionsUAV,

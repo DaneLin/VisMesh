@@ -1,0 +1,155 @@
+/*=============================================================================
+    PopulateBoxChartInstanceBuffer.usf
+    集成 Frustum Culling 的版本
+=============================================================================*/
+
+#include "/Engine/Private/Common.ush"
+
+// -----------------------------------------------------------------------------
+// Parameters
+// -----------------------------------------------------------------------------
+float XSpace;       // [cite: 2]
+float YSpace;
+int NumColumns;
+int NumInstances;
+float Time;
+float4x4 ViewProjectionMatrix; // <--- 新增：视锥投影矩阵
+
+RWBuffer<float4> OutInstanceOriginBuffer;
+RWBuffer<float4> OutInstanceTransforms;
+RWBuffer<uint> OutIndirectArgs; // Arg[1] 将作为原子计数器
+
+#define WIDTH 50.0f
+
+bool IsSphereVisible(float3 SphereCenter, float SphereRadius)
+{
+    // 【关键修复 1】: 转置矩阵
+    // Unreal 的 ViewProjectionMatrix 在传入 HLSL 时通常被视为列优先(为了 mul 计算优化)。
+    // 而下面的平面提取代码是基于行优先逻辑编写的 (M[0] 代表第0行)。
+    // 因此我们需要先将其转置回来，确保 M[0] 确实是 Row 0。
+    float4x4 M = transpose(ViewProjectionMatrix);
+
+    float4 Planes[6];
+
+    // =========================================================================
+    // 视锥平面提取 (Gribb-Hartmann)
+    // 基于 Row-Major 矩阵 M，平面方程系数为 (Col3 +/- Col_i)
+    // M[row][col] 访问的是第 row 行，第 col 列
+    // =========================================================================
+
+    // 1. Left Plane:   x + w > 0  =>  (Col3 + Col0)
+    Planes[0] = float4(M[0][3] + M[0][0], M[1][3] + M[1][0], M[2][3] + M[2][0], M[3][3] + M[3][0]);
+
+    // 2. Right Plane:  w - x > 0  =>  (Col3 - Col0)
+    Planes[1] = float4(M[0][3] - M[0][0], M[1][3] - M[1][0], M[2][3] - M[2][0], M[3][3] - M[3][0]);
+
+    // 3. Bottom Plane: y + w > 0  =>  (Col3 + Col1)
+    Planes[2] = float4(M[0][3] + M[0][1], M[1][3] + M[1][1], M[2][3] + M[2][1], M[3][3] + M[3][1]);
+
+    // 4. Top Plane:    w - y > 0  =>  (Col3 - Col1)
+    Planes[3] = float4(M[0][3] - M[0][1], M[1][3] - M[1][1], M[2][3] - M[2][1], M[3][3] - M[3][1]);
+
+    // 5. Near Plane (Unreal Reversed-Z): z < w  =>  w - z > 0  => (Col3 - Col2)
+    // 注意：原来的代码注释里 Near 和 Far 写反了，但数学公式是对的。
+    // 这里修正为明确的 Reversed-Z 逻辑。
+    Planes[4] = float4(M[0][3] - M[0][2], M[1][3] - M[1][2], M[2][3] - M[2][2], M[3][3] - M[3][2]);
+
+    // 6. Far Plane (Unreal Reversed-Z):  z > 0  =>  (Col2)
+    // 远平面在无限远处通常对应 z=0
+    Planes[5] = float4(M[0][2],           M[1][2],           M[2][2],           M[3][2]);
+
+    // =========================================================================
+    // 剔除测试
+    // =========================================================================
+    
+    // 增加一点安全边距，防止刚好在边缘的物体闪烁
+    // 也可以防止由于 TAA 造成的边缘物体突然消失的视觉问题
+    float CullRadius = SphereRadius * 1.05f; 
+
+    [unroll]
+    for (int i = 0; i < 6; ++i)
+    {
+        float4 Plane = Planes[i];
+        
+        // 必须归一化平面法线，否则距离判定会随视锥深度变形
+        float PlaneNormalLength = length(Plane.xyz);
+        
+        // 计算带符号距离: Dot(Normal, Position) + D
+        float Dist = dot(Plane.xyz, SphereCenter) + Plane.w;
+
+        // 如果距离小于 -Radius，说明球体完全在平面外侧
+        if (Dist < -CullRadius * PlaneNormalLength)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+[numthreads(THREAD_COUNT, 1, 1)]
+void MainCS(uint TaskIndex : SV_DispatchThreadID)
+{
+    // 越界检查
+    if (TaskIndex >= (uint)NumInstances) return;
+
+    // 1. 计算位置 (和原逻辑一致) [cite: 6]
+    uint Row = TaskIndex / NumColumns;
+    uint Col = TaskIndex % NumColumns;
+    float3 Position = float3(Col * XSpace, Row * YSpace, 0.0f);
+
+    // 2. 计算高度 (和原逻辑一致) [cite: 7]
+    float2 GridCenter = float2(NumColumns * 0.5f, NumInstances / NumColumns * 0.5f);
+    float Dist = distance(float2(Col, Row), GridCenter);
+    float Wave = sin(Dist * 0.1f - Time * 2.0f) * 0.5f + 0.5f;
+    float BarHeight = Wave * 500.0f + 20.0f; // [cite: 9]
+
+    // -----------------------------------------------------------------
+    // 3. 构建球形包围盒 (Bounding Sphere)
+    // -----------------------------------------------------------------
+    
+    // 几何体范围是 [Position, Position + (WIDTH, WIDTH, BarHeight)]
+    // 中心点 = Position + 半个尺寸
+    float3 HalfSize = float3(WIDTH * 0.5f, WIDTH * 0.5f, BarHeight * 0.5f);
+    float3 SphereCenter = Position + HalfSize; // [cite: 23, 24]
+
+    float MaxBarHeight = 520.0f; 
+    float3 ConservativeHalfSize = float3(WIDTH * 0.5f, WIDTH * 0.5f, MaxBarHeight * 0.5f);
+    float ConservativeRadius = length(ConservativeHalfSize);
+
+    // -----------------------------------------------------------------
+    // 4. 执行球体剔除
+    // -----------------------------------------------------------------
+    if (IsSphereVisible(SphereCenter, ConservativeRadius))
+    {
+        // 5. 如果可见：原子增加计数器，获取写入位置
+        uint WriteIndex;
+        // OutIndirectArgs[1] 对应 InstanceCount [cite: 17]
+        InterlockedAdd(OutIndirectArgs[1], 1, WriteIndex);
+
+        // 6. 写入 Instance Data (逻辑和原来一样，只是索引变了)
+        OutInstanceOriginBuffer[WriteIndex] = float4(Position, 1.0f); // 注意用 WriteIndex
+
+        float ScaleX = WIDTH;
+        float ScaleY = WIDTH;
+        float ScaleZ = BarHeight;
+
+        float4 TransformRow0 = float4(ScaleX, 0.0f, 0.0f, 0.0f); // [cite: 11]
+        float4 TransformRow1 = float4(0.0f, ScaleY, 0.0f, 0.0f);
+        float4 TransformRow2 = float4(0.0f, 0.0f, ScaleZ, 0.0f);
+
+        uint WriteOffset = WriteIndex * 3; // [cite: 12]
+        OutInstanceTransforms[WriteOffset + 0] = TransformRow0;
+        OutInstanceTransforms[WriteOffset + 1] = TransformRow1;
+        OutInstanceTransforms[WriteOffset + 2] = TransformRow2;
+    }
+
+    // 7. 只需要第0号线程去设置其他固定参数
+    if (TaskIndex == 0)
+    {
+        OutIndirectArgs[0] = 36; // IndexCountPerInstance [cite: 15]
+        OutIndirectArgs[2] = 0;  // StartIndexLocation [cite: 17]
+        OutIndirectArgs[3] = 0;  // BaseVertexLocation
+        OutIndirectArgs[4] = 0;  // StartInstanceLocation
+    }
+}

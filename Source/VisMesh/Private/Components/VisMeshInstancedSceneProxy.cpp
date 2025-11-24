@@ -1,6 +1,8 @@
 #include "Components/VisMeshInstancedSceneProxy.h"
 
 #include "DataDrivenShaderPlatformInfo.h"
+#include "RenderGraphResources.h"
+#include "RenderGraphUtils.h"
 #include "Components/VisMeshInstancedComponent.h"
 #include "RenderBase/VisMeshInstancedVertexFactory.h"
 #include "Utils/VisMeshUtils.h"
@@ -109,25 +111,64 @@ void FVisMeshInstancedSceneProxy::CreateRenderThreadResources()
 
 	VertexFactory->SetData(NewData, InstanceBuffer ? &InstanceData : nullptr);
 	VertexFactory->InitResource(RHICmdList);
-
 	
-
-	FRHIResourceCreateInfo IndirectCreateInfo(TEXT("VisMeshIndirectArgs"));
-	EBufferUsageFlags IndirectUsage = EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::DrawIndirect;
 	// 必须包含 DrawIndirect
 
 	const uint32 IndirectSize = sizeof(FRHIDrawIndirectParameters);
 
-	IndirectArgsBuffer = RHICmdList.CreateVertexBuffer(IndirectSize, IndirectUsage, IndirectCreateInfo);
+	// ========================================================================
+    // 1. 定义描述符 (为了告诉 RDG 这是什么类型的资源)
+    // ========================================================================
+    const uint32 NumElements = sizeof(FRHIDrawIndirectParameters) / sizeof(uint32);
+    const uint32 BytesPerElement = sizeof(uint32); // R32_UINT
 
-	IndirectArgsBufferUAV = RHICmdList.CreateUnorderedAccessView(IndirectArgsBuffer,
-	                                                             FRHIViewDesc::CreateBufferUAV()
-	                                                             .SetTypeFromBuffer(IndirectArgsBuffer)
-	                                                             .SetFormat(PF_R32_UINT)
-	                                                             .SetNumElements(uint32(
-		                                                             sizeof(FRHIDrawIndirectParameters) / sizeof(
-			                                                             uint32)))
-	);
+    FRDGBufferDesc IndirectDesc = FRDGBufferDesc::CreateIndirectDesc(NumElements * BytesPerElement);
+    // 必须加上 UnorderedAccess，否则 RDG 创建 UAV 会失败
+    IndirectDesc.Usage |= EBufferUsageFlags::UnorderedAccess;
+
+    // ========================================================================
+    // 2. 手动创建底层的 RHI Buffer
+    // ========================================================================
+    FRHIResourceCreateInfo IndirectCreateInfo(TEXT("VisMeshIndirectArgs"));
+    
+    // 使用 CreateBuffer 而不是 CreateVertexBuffer (UE5 推荐)，或者保持原样
+    // 注意：Usage 必须包含 DrawIndirect 和 UnorderedAccess
+    EBufferUsageFlags IndirectUsage = EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::DrawIndirect | EBufferUsageFlags::ShaderResource;
+
+    FBufferRHIRef RawIndirectBuffer = RHICmdList.CreateBuffer(
+        IndirectDesc.BytesPerElement * IndirectDesc.NumElements,
+        IndirectUsage,
+        IndirectDesc.BytesPerElement,
+        ERHIAccess::IndirectArgs, // 初始状态
+        IndirectCreateInfo
+    );
+
+    // ========================================================================
+    // 3. 将 RHI Buffer 包装成 FRDGPooledBuffer
+    // ========================================================================
+    // 使用你贴出的构造函数: FRDGPooledBuffer(RHICmdList, InBuffer, InDesc, NumAllocatedElements, Name)
+    IndirectArgsBuffer = new FRDGPooledBuffer(
+        RHICmdList,
+        RawIndirectBuffer,
+        IndirectDesc,
+        IndirectDesc.NumElements,
+        TEXT("VisMeshIndirectArgs")
+    );
+
+    // ========================================================================
+    // 4. 创建 RHI UAV (供 MeshBatch 使用)
+    // ========================================================================
+    // 这一步和之前一样，MeshBatch 需要 RHI 层的 UAV
+    if (RawIndirectBuffer.IsValid())
+    {
+        IndirectArgsBufferUAV = RHICmdList.CreateUnorderedAccessView(
+            RawIndirectBuffer,
+            FRHIViewDesc::CreateBufferUAV()
+                .SetTypeFromBuffer(RawIndirectBuffer)
+                .SetFormat(PF_R32_UINT)
+                .SetNumElements(NumElements)
+        );
+    }
 }
 
 void FVisMeshInstancedSceneProxy::DestroyRenderThreadResources()
@@ -195,7 +236,7 @@ FMeshBatch* FVisMeshInstancedSceneProxy::CreateMeshBatch(class FMeshElementColle
 	MeshBatch.MaterialRenderProxy = MaterialRenderProxy;
 
 	MeshBatchElement.NumPrimitives = 0;
-	MeshBatchElement.IndirectArgsBuffer = IndirectArgsBuffer;
+	MeshBatchElement.IndirectArgsBuffer = IndirectArgsBuffer->GetRHI();
 	MeshBatchElement.IndirectArgsOffset = 0;
 	MeshBatchElement.PrimitiveUniformBuffer = GetUniformBuffer();
 
@@ -210,13 +251,62 @@ void FVisMeshInstancedSceneProxy::DispatchComputePass_RenderThread(FRDGBuilder& 
 	if (PositionBuffer && IndirectArgsBuffer && InstanceBuffer)
 	{
 		const float CurrentTime = ViewFamily.Time.GetRealTimeSeconds();
+		// 1. 注册外部资源 (前提：IndirectArgsBuffer 类型已改为 TRefCountPtr<FRDGPooledBuffer>)
+		FRDGBufferRef IndirectArgsRDG = GraphBuilder.RegisterExternalBuffer(IndirectArgsBuffer);
 
+		// ===================================================================================
+		// 直接重置 IndirectBuffer 全部内容
+		// ===================================================================================
+
+		// A. 准备复位数据 (恢复成 DrawIndirect 需要的初始值)
+		FRHIDrawIndirectParameters InitData;
+		InitData.VertexCountPerInstance = GNumVertsPerBox; // 保持 36 (或你的顶点数)
+		InitData.InstanceCount = 0;                        // 重置为 0
+		InitData.StartVertexLocation = 0;
+		InitData.StartInstanceLocation = 0;
+
+		// B. 创建上传 Buffer (利用 RenderGraphUtils 中的辅助函数)
+		// CreateUploadBuffer 会自动处理内存分配和上传队列
+		FRDGBufferRef ResetBuffer = CreateUploadBuffer(
+			GraphBuilder,
+			TEXT("VisMeshIndirectReset"),
+			sizeof(FRHIDrawIndirectParameters),
+			1,          // 元素数量
+			&InitData,  // 初始数据指针
+			sizeof(InitData) // 数据大小
+		);
+
+		// C. 执行复制 (利用 RenderGraphUtils 中的辅助函数)
+		// 这将 ResetBuffer 的内容完整覆盖到 IndirectArgsRDG
+		AddCopyBufferPass(GraphBuilder, IndirectArgsRDG, ResetBuffer);
+
+		FRDGBufferUAVRef IndirectArgsUAVRDG = GraphBuilder.CreateUAV(IndirectArgsRDG, PF_R32_UINT);
+		
+		// 1. 获取主视图的 ViewProjectionMatrix
+		FMatrix ViewProjMatrix = FMatrix::Identity;
+		if (ViewFamily.Views.Num() > 0)
+		{
+			const FSceneView* MainView = ViewFamily.Views[0];
+
+			// --- 构建 World -> Clip 矩阵 ---
+			// 获取 Translated World -> Clip
+			FMatrix TranslatedViewProj = MainView->ViewMatrices.GetViewProjectionMatrix();
+			// 获取 PreViewTranslation
+			FVector PreViewTranslation = MainView->ViewMatrices.GetPreViewTranslation();
+			// 合并平移: World -> Clip
+			FMatrix WorldToClip = FTranslationMatrix(PreViewTranslation) * TranslatedViewProj;
+			
+			// --- 合并为 Local -> Clip ---
+			// 注意乘法顺序: Vector * LocalToWorld * WorldToClip
+			ViewProjMatrix = GetLocalToWorld() * WorldToClip;
+		}
+		FMatrix44f ViewProjectionMatrix = FMatrix44f(ViewProjMatrix.GetTransposed());
 		// 调用具体的 Pass 添加函数 (这个函数可以是静态的，或者 VisMeshUtils 里的)
-		AddBoxChartInstancingPass(GraphBuilder,
+		AddBoxChartFrustumCulledInstancePass(GraphBuilder,
 									InstanceBuffer->GetOriginUAV(),
 		                          InstanceBuffer->GetTransformUAV(), // 传入 Instance Buffer UAV
-		                          IndirectArgsBufferUAV,
-		                          XSpace, YSpace, NumColumns, NumInstances, CurrentTime
+		                          IndirectArgsUAVRDG,
+		                          XSpace, YSpace, NumColumns, NumInstances, CurrentTime,ViewProjectionMatrix
 		);
 	}
 }

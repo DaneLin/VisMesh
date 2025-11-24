@@ -10,7 +10,7 @@ class FVisMeshInstancedSceneProxy final : public FVisMeshSceneProxyBase
 public:
 	FVisMeshInstancedVertexFactory* VertexFactory;
 	FPositionUAVVertexBuffer* PositionBuffer;
-	TRefCountPtr<FRHIBuffer> IndirectArgsBuffer;
+	TRefCountPtr<FRDGPooledBuffer> IndirectArgsBuffer;
 	FUnorderedAccessViewRHIRef IndirectArgsBufferUAV;
 
 	FVisMeshInstanceBuffer* InstanceBuffer;

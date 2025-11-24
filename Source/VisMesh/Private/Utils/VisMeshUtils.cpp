@@ -115,6 +115,40 @@ void AddBoxChartInstancingPass(FRDGBuilder& GraphBuilder,FRHIUnorderedAccessView
 	);
 }
 
+DECLARE_GPU_DRAWCALL_STAT(PopulateInstanceCulledPass);
+
+void AddBoxChartFrustumCulledInstancePass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* InstanceOriginBuffersUAV,
+	FRHIUnorderedAccessView* InstanceTransformsUAV, FRDGBufferUAVRef IndirectArgsBufferUAV, float InXSpace,
+	float InYSpace, int32 InNumColumns, int32 InNumInstances, float InTime, FMatrix44f InProjectionViewMatrix)
+{
+	RDG_GPU_STAT_SCOPE(GraphBuilder, PopulateInstanceCulledPass);
+	RDG_EVENT_SCOPE(GraphBuilder, "PopulateInstanceCulledPass");
+
+	TShaderMapRef<FPopulateBoxChartFrustumCulledInstanceBufferCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
+
+	FPopulateBoxChartFrustumCulledInstanceBufferCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FPopulateBoxChartFrustumCulledInstanceBufferCS::FParameters>();
+	PassParameters->OutInstanceOriginBuffer = InstanceOriginBuffersUAV;
+	PassParameters->OutInstanceTransforms = InstanceTransformsUAV;
+	PassParameters->OutIndirectArgs = IndirectArgsBufferUAV;
+	PassParameters->XSpace = InXSpace;
+	PassParameters->YSpace = InYSpace;
+	PassParameters->NumColumns = InNumColumns;
+	PassParameters->NumInstances = InNumInstances;
+	PassParameters->Time = InTime;
+	PassParameters->ViewProjectionMatrix = InProjectionViewMatrix;
+
+	int32 GroupCount = FMath::DivideAndRoundUp(InNumInstances, (int32)FPopulateBoxChartFrustumCulledInstanceBufferCS::ThreadGroupSize);
+
+	FComputeShaderUtils::AddPass(
+		GraphBuilder,
+		RDG_EVENT_NAME("PopulateInstanceTransforms"),
+		ERDGPassFlags::Compute | ERDGPassFlags::NeverCull,
+		ComputeShader,
+		PassParameters,
+		FIntVector(GroupCount, 1, 1)
+	);
+}
+
 DECLARE_GPU_DRAWCALL_STAT(PopulateWireFramePass);
 
 void AddBoxWireframePass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* PositionsUAV,
