@@ -5,7 +5,6 @@ const TCHAR* FPositionUAVVertexBuffer::GetName() const
 	return TEXT("PositionUAVVertexBuffer");
 }
 
-
 void FPositionUAVVertexBuffer::InitRHI(FRHICommandListBase& RHICmdList)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FPositionUAVVertexBuffer::InitRHI);

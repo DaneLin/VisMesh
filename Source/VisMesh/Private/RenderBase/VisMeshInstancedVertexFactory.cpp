@@ -30,10 +30,8 @@ void FVisMeshInstancedVertexFactory::ModifyCompilationEnvironment(
 {
 	FLocalVertexFactory::ModifyCompilationEnvironment(Parameters, OutEnvironment);
         
-	// 开启 Instancing 宏，激活 USH 中的逻辑
 	OutEnvironment.SetDefine(TEXT("USE_INSTANCING"), TEXT("1"));
 		
-	// Ensure MVF is enabled if the platform supports it
 	if (RHISupportsManualVertexFetch(Parameters.Platform))
 	{
 		OutEnvironment.SetDefine(TEXT("MANUAL_VERTEX_FETCH"), TEXT("1"));
@@ -43,7 +41,6 @@ void FVisMeshInstancedVertexFactory::ModifyCompilationEnvironment(
 bool FVisMeshInstancedVertexFactory::ShouldCompilePermutation(
 	const FVertexFactoryShaderPermutationParameters& Parameters)
 {
-	// 确保只在支持 Manual Vertex Fetch 的平台上启用
 	return RHISupportsManualVertexFetch(Parameters.Platform); 
 }
 

@@ -5,31 +5,9 @@
 #include "RenderGraphUtils.h"
 #include "RenderBase/VisMeshDispatchShaders.h"
 
-DECLARE_GPU_DRAWCALL_STAT(PopulateVertexPass);
-DECLARE_GPU_DRAWCALL_STAT(PopulateInstancePass);
-DECLARE_GPU_DRAWCALL_STAT(PopulateWireFramePass);
-
-void AddPopulateVertexPass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* PositionsUAV,FRHIUnorderedAccessView* IndirectArgsBufferUAV, float InXSpace, float InYSpace, int32 InNumColumns,int32 InNumInstances, float InTime)
-{
-	RDG_GPU_STAT_SCOPE(GraphBuilder, PopulateVertexPass); // for unreal insights
-	RDG_EVENT_SCOPE(GraphBuilder, "PopulateVertexPass"); // for render doc
-
-	TShaderMapRef<FPopulateVertexAndIndirectBufferCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
-
-	FPopulateVertexAndIndirectBufferCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FPopulateVertexAndIndirectBufferCS::FParameters>();
-	PassParameters->OutInstanceVertices = PositionsUAV;
-	PassParameters->OutIndirectArgs = IndirectArgsBufferUAV;
-	PassParameters->XSpace = InXSpace;
-	PassParameters->YSpace = InYSpace;
-	PassParameters->NumColumns = InNumColumns;
-	PassParameters->NumInstances = InNumInstances;
-	PassParameters->Time = InTime;
-
-	// 计算 GroupCount
-	int32 GroupCount = FMath::DivideAndRoundUp(InNumInstances,(int32)FPopulateVertexAndIndirectBufferCS::ThreadGroupSize);
-
-	FComputeShaderUtils::AddPass(GraphBuilder,RDG_EVENT_NAME("PopulateVertexPass"),ERDGPassFlags::Compute | ERDGPassFlags::NeverCull,ComputeShader,PassParameters,FIntVector(GroupCount, 1, 1));
-}
+// --------------------------------------------------------
+// ------------------------Utils---------------------------
+// --------------------------------------------------------
 
 void ConvertProcMeshToDynMeshVertex(FDynamicMeshVertex& Vert, const FVisMeshVertex& ProcVert)
 {
@@ -42,63 +20,6 @@ void ConvertProcMeshToDynMeshVertex(FDynamicMeshVertex& Vert, const FVisMeshVert
 	Vert.TangentX = ProcVert.Tangent.TangentX;
 	Vert.TangentZ = ProcVert.Normal;
 	Vert.TangentZ.Vector.W = ProcVert.Tangent.bFlipTangentY ? -127 : 127;
-}
-
-void AddBoxChartInstancingPass(FRDGBuilder& GraphBuilder,FRHIUnorderedAccessView* InstanceOriginBuffersUAV, FRHIUnorderedAccessView* InstanceTransformsUAV,
-	FRHIUnorderedAccessView* IndirectArgsBufferUAV, float InXSpace, float InYSpace, int32 InNumColumns,
-	int32 InNumInstances, float InTime)
-{
-	RDG_GPU_STAT_SCOPE(GraphBuilder, PopulateInstancePass);
-	RDG_EVENT_SCOPE(GraphBuilder, "PopulateInstancePass");
-
-	TShaderMapRef<FPopulateBoxChartInstanceBufferCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
-
-	FPopulateBoxChartInstanceBufferCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FPopulateBoxChartInstanceBufferCS::FParameters>();
-    PassParameters->OutInstanceOriginBuffer = InstanceOriginBuffersUAV;
-	PassParameters->OutInstanceTransforms = InstanceTransformsUAV;
-	PassParameters->OutIndirectArgs = IndirectArgsBufferUAV;
-	PassParameters->XSpace = InXSpace;
-	PassParameters->YSpace = InYSpace;
-	PassParameters->NumColumns = InNumColumns;
-	PassParameters->NumInstances = InNumInstances;
-	PassParameters->Time = InTime;
-
-	int32 GroupCount = FMath::DivideAndRoundUp(InNumInstances, (int32)FPopulateVertexAndIndirectBufferCS::ThreadGroupSize);
-
-	FComputeShaderUtils::AddPass(
-		GraphBuilder,
-		RDG_EVENT_NAME("PopulateInstanceTransforms"),
-		ERDGPassFlags::Compute | ERDGPassFlags::NeverCull,
-		ComputeShader,
-		PassParameters,
-		FIntVector(GroupCount, 1, 1)
-	);
-}
-
-void AddBoxWireframePass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* PositionsUAV,
-	FRHIUnorderedAccessView* IndirectArgsBufferUAV, float InXSpace, float InYSpace, int32 InNumColumns,
-	int32 InNumInstances, float InLineWidth, float InTime, FVector4f InCameraPosition)
-{
-	RDG_GPU_STAT_SCOPE(GraphBuilder, PopulateWireFramePass); // for unreal insights
-	RDG_EVENT_SCOPE(GraphBuilder, "PopulateWireFramePass"); // for render doc
-
-	TShaderMapRef<FPopulateBoxWireframeBufferCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
-
-	FPopulateBoxWireframeBufferCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FPopulateBoxWireframeBufferCS::FParameters>();
-	PassParameters->OutInstanceVertices = PositionsUAV;
-	PassParameters->OutIndirectArgs = IndirectArgsBufferUAV;
-	PassParameters->XSpace = InXSpace;
-	PassParameters->YSpace = InYSpace;
-	PassParameters->NumColumns = InNumColumns;
-	PassParameters->NumInstances = InNumInstances;
-	PassParameters->LineWidth = InLineWidth;
-	PassParameters->Time = InTime;
-	PassParameters->CameraPos = InCameraPosition;
-
-	// 计算 GroupCount
-	int32 GroupCount = FMath::DivideAndRoundUp(InNumInstances,(int32)FPopulateBoxWireframeBufferCS::ThreadGroupSize);
-
-	FComputeShaderUtils::AddPass(GraphBuilder,RDG_EVENT_NAME("PopulateWireFramePass"),ERDGPassFlags::Compute | ERDGPassFlags::NeverCull,ComputeShader,PassParameters,FIntVector(GroupCount, 1, 1));
 }
 
 void GetUnitCubeVertices(TArray<FVector3f>& OutVertices)
@@ -139,4 +60,104 @@ void GetUnitCubeVertices(TArray<FVector3f>& OutVertices)
 	// 6. Right (+X)
 	OutVertices.Add(p1); OutVertices.Add(p2); OutVertices.Add(p6);
 	OutVertices.Add(p1); OutVertices.Add(p6); OutVertices.Add(p5);
+}
+
+// --------------------------------------------------------
+// ------------------------Passes--------------------------
+// --------------------------------------------------------
+
+DECLARE_GPU_DRAWCALL_STAT(PopulateVertexPass);
+
+void AddPopulateVertexPass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* PositionsUAV,FRHIUnorderedAccessView* IndirectArgsBufferUAV, float InXSpace, float InYSpace, int32 InNumColumns,int32 InNumInstances, float InTime)
+{
+	RDG_GPU_STAT_SCOPE(GraphBuilder, PopulateVertexPass); // for unreal insights
+	RDG_EVENT_SCOPE(GraphBuilder, "PopulateVertexPass"); // for render doc
+
+	TShaderMapRef<FPopulateVertexAndIndirectBufferCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
+
+	FPopulateVertexAndIndirectBufferCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FPopulateVertexAndIndirectBufferCS::FParameters>();
+	PassParameters->OutInstanceVertices = PositionsUAV;
+	PassParameters->OutIndirectArgs = IndirectArgsBufferUAV;
+	PassParameters->XSpace = InXSpace;
+	PassParameters->YSpace = InYSpace;
+	PassParameters->NumColumns = InNumColumns;
+	PassParameters->NumInstances = InNumInstances;
+	PassParameters->Time = InTime;
+
+	// 计算 GroupCount
+	int32 GroupCount = FMath::DivideAndRoundUp(InNumInstances,(int32)FPopulateVertexAndIndirectBufferCS::ThreadGroupSize);
+
+	FComputeShaderUtils::AddPass(
+		GraphBuilder,
+		RDG_EVENT_NAME("PopulateVertexPass"),
+		ERDGPassFlags::Compute | ERDGPassFlags::NeverCull,
+		ComputeShader,PassParameters,
+		FIntVector(GroupCount, 1, 1));
+}
+
+DECLARE_GPU_DRAWCALL_STAT(PopulateInstancePass);
+
+void AddBoxChartInstancingPass(FRDGBuilder& GraphBuilder,FRHIUnorderedAccessView* InstanceOriginBuffersUAV, FRHIUnorderedAccessView* InstanceTransformsUAV,
+	FRHIUnorderedAccessView* IndirectArgsBufferUAV, float InXSpace, float InYSpace, int32 InNumColumns,
+	int32 InNumInstances, float InTime)
+{
+	RDG_GPU_STAT_SCOPE(GraphBuilder, PopulateInstancePass);
+	RDG_EVENT_SCOPE(GraphBuilder, "PopulateInstancePass");
+
+	TShaderMapRef<FPopulateBoxChartInstanceBufferCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
+
+	FPopulateBoxChartInstanceBufferCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FPopulateBoxChartInstanceBufferCS::FParameters>();
+    PassParameters->OutInstanceOriginBuffer = InstanceOriginBuffersUAV;
+	PassParameters->OutInstanceTransforms = InstanceTransformsUAV;
+	PassParameters->OutIndirectArgs = IndirectArgsBufferUAV;
+	PassParameters->XSpace = InXSpace;
+	PassParameters->YSpace = InYSpace;
+	PassParameters->NumColumns = InNumColumns;
+	PassParameters->NumInstances = InNumInstances;
+	PassParameters->Time = InTime;
+
+	int32 GroupCount = FMath::DivideAndRoundUp(InNumInstances, (int32)FPopulateVertexAndIndirectBufferCS::ThreadGroupSize);
+
+	FComputeShaderUtils::AddPass(
+		GraphBuilder,
+		RDG_EVENT_NAME("PopulateInstanceTransforms"),
+		ERDGPassFlags::Compute | ERDGPassFlags::NeverCull,
+		ComputeShader,
+		PassParameters,
+		FIntVector(GroupCount, 1, 1)
+	);
+}
+
+DECLARE_GPU_DRAWCALL_STAT(PopulateWireFramePass);
+
+void AddBoxWireframePass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* PositionsUAV,
+	FRHIUnorderedAccessView* IndirectArgsBufferUAV, float InXSpace, float InYSpace, int32 InNumColumns,
+	int32 InNumInstances, float InLineWidth, float InTime, FVector4f InCameraPosition)
+{
+	RDG_GPU_STAT_SCOPE(GraphBuilder, PopulateWireFramePass); // for unreal insights
+	RDG_EVENT_SCOPE(GraphBuilder, "PopulateWireFramePass"); // for render doc
+
+	TShaderMapRef<FPopulateBoxWireframeBufferCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
+
+	FPopulateBoxWireframeBufferCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FPopulateBoxWireframeBufferCS::FParameters>();
+	PassParameters->OutInstanceVertices = PositionsUAV;
+	PassParameters->OutIndirectArgs = IndirectArgsBufferUAV;
+	PassParameters->XSpace = InXSpace;
+	PassParameters->YSpace = InYSpace;
+	PassParameters->NumColumns = InNumColumns;
+	PassParameters->NumInstances = InNumInstances;
+	PassParameters->LineWidth = InLineWidth;
+	PassParameters->Time = InTime;
+	PassParameters->CameraPos = InCameraPosition;
+
+	// 计算 GroupCount
+	int32 GroupCount = FMath::DivideAndRoundUp(InNumInstances,(int32)FPopulateBoxWireframeBufferCS::ThreadGroupSize);
+
+	FComputeShaderUtils::AddPass(
+		GraphBuilder,
+		RDG_EVENT_NAME("PopulateWireFramePass"),
+		ERDGPassFlags::Compute | ERDGPassFlags::NeverCull,
+		ComputeShader,
+		PassParameters,
+		FIntVector(GroupCount, 1, 1));
 }
