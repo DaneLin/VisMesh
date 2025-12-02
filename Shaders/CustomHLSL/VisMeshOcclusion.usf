@@ -1,0 +1,41 @@
+﻿// VisMeshOcclusion.ush
+// 计算视线遮挡剔除因子
+
+float CalculateSightlineOcclusion(float3 CamPos, float3 TargetPos, float3 PixPos, float Radius, float Active)
+{
+	// 1. 基础向量计算
+	float3 LineVec = TargetPos - CamPos;
+	float TargetDist = length(LineVec);
+
+	// 防止除以0
+	if (TargetDist < 0.001)
+	{
+		return 0.0f;
+	}
+
+	float3 LineDir = LineVec / TargetDist;
+	float3 PixVec = PixPos - CamPos;
+
+	// 2. 投影计算
+	// 像素在视线轴上的投影长度
+	float ProjectedDist = dot(PixVec, LineDir);
+
+	// 视线上离像素最近的点
+	float3 ClosestPoint = CamPos + (LineDir * ProjectedDist);
+    
+	// 像素距离视线轴的垂直距离
+	float DistToLine = length(PixPos - ClosestPoint);
+
+	// 3. 逻辑判断
+	// Active: 开关
+	// DistToLine < Radius: 在圆柱体通道内
+	// ProjectedDist < TargetDist: 在目标前面 (不剔除目标背后的背景)
+	// ProjectedDist > 0: 在相机前面 (不剔除相机背后的物体)
+    
+	if (Active > 0.5f && DistToLine < Radius && ProjectedDist < TargetDist && ProjectedDist > 0.0f)
+	{
+		return 1.0f; // 返回 1.0 表示“被遮挡/需要透明”
+	}
+
+	return 0.0f; // 返回 0.0 表示“保持实体”
+}

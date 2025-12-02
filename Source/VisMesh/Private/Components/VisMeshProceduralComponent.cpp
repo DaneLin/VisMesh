@@ -419,12 +419,55 @@ bool UVisMeshProceduralComponent::GetTriMeshSizeEstimates(struct FTriMeshCollisi
 
 bool UVisMeshProceduralComponent::GetPhysicsTriMeshData(struct FTriMeshCollisionData* CollisionData, bool InUseAllTriData)
 {
-	return IInterface_CollisionDataProvider::GetPhysicsTriMeshData(CollisionData, InUseAllTriData);
+	int32 VertexBase = 0; // 用于记录顶点偏移量
+
+	// 1. 遍历所有 Section
+	for (int32 SectionIdx = 0; SectionIdx < VisMeshSections.Num(); SectionIdx++)
+	{
+		const FVisMeshSection& Section = VisMeshSections[SectionIdx];
+		// 检查是否有数据 且 (强制全部使用 OR 开启了碰撞)
+		if (Section.Data.Triangles.Num() >= 3 && (InUseAllTriData || Section.bEnableCollision))
+		{
+			// 2. 拷贝顶点数据
+			// Append 将新顶点添加到物理网格的顶点数组末尾
+			CollisionData->Vertices.Append(Section.Data.Positions);
+
+			// 3. 拷贝三角形索引
+			// 注意：FVisMeshData 使用 TArray<int32>，物理数据使用 FTriIndices (struct {v0,v1,v2})
+			// 并且索引需要加上当前的 VertexBase 偏移量
+			const int32 NumTriangles = Section.Data.Triangles.Num() / 3;
+			for (int32 i = 0; i < NumTriangles; i++)
+			{
+				FTriIndices Triangle;
+				Triangle.v0 = Section.Data.Triangles[i * 3 + 0] + VertexBase;
+				Triangle.v1 = Section.Data.Triangles[i * 3 + 1] + VertexBase;
+				Triangle.v2 = Section.Data.Triangles[i * 3 + 2] + VertexBase;
+
+				CollisionData->Indices.Add(Triangle);
+
+				// 设置材质索引 (用于物理材质区分)
+				CollisionData->MaterialIndices.Add(SectionIdx);
+			}
+
+			// 更新顶点偏移量，供下一个 Section 使用
+			VertexBase = CollisionData->Vertices.Num();
+		}
+	}
+
+	bool bResult = (CollisionData->Vertices.Num() > 0 && CollisionData->Indices.Num() > 0);
+	return bResult;
 }
 
 bool UVisMeshProceduralComponent::ContainsPhysicsTriMeshData(bool InUseAllTriData) const
 {
-	return IInterface_CollisionDataProvider::ContainsPhysicsTriMeshData(InUseAllTriData);
+	for (const FVisMeshSection& Section : VisMeshSections)
+	{
+		if (Section.Data.Triangles.Num() >= 3 && (InUseAllTriData || Section.bEnableCollision))
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 FVisMeshSection* UVisMeshProceduralComponent::GetVisMeshSection(int32 SectionIndex)
