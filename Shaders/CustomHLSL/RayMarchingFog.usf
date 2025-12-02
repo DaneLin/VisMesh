@@ -1,0 +1,74 @@
+﻿float4 CalculateRayMarchFog(float3 LocalPos, float3 CameraLocalPos, float3 LocalCamVec, int StepCount, float3 BoxMin, float3 BoxMax, float3 InFogColor, float InDensity)
+{
+    float EdgeFadeDistance = 10.0; 
+
+    // 1. 射线-盒子相交检测 (Slab Method)
+    float3 invDir = 1.0 / LocalCamVec;
+    float3 tMin = (BoxMin - CameraLocalPos) * invDir;
+    float3 tMax = (BoxMax - CameraLocalPos) * invDir;
+    
+    // 修复：min/max 只能接受2个参数，必须嵌套使用
+    float3 t1vec = min(tMin, tMax);
+    float3 t2vec = max(tMin, tMax);
+
+    float tNear = max(max(t1vec.x, t1vec.y), t1vec.z);
+    float tFar = min(min(t2vec.x, t2vec.y), t2vec.z);
+
+    // 射线没有击中盒子，或者盒子在相机后面
+    if (tNear > tFar || tFar < 0.0) return float4(0, 1, 0, 1);
+
+    // 修正起始点 (处理相机在盒子内部的情况)
+    float tStart = max(tNear, 0.0);
+    float dist = tFar - tStart; // 光线在盒子内穿过的总距离
+
+    // 距离过短忽略
+    if (dist <= 0.001) return float4(1, 0, 0, 1);
+
+    // 2. 步进设置
+    float stepSize = dist / (float)StepCount;
+    float3 currentPos = CameraLocalPos + LocalCamVec * tStart;
+
+    // --- 随机抖动 (Jitter) ---
+    // 利用像素位置生成随机偏移，消除层状条纹
+    float jitter = frac(sin(dot(LocalPos.xy, float2(12.9898,78.233))) * 43758.5453);
+    currentPos += LocalCamVec * stepSize * jitter;
+    // -----------------------
+
+    float accumulatedDensity = 0.0;
+
+    // 3. 循环步进
+    for(int i = 0; i < StepCount; i++)
+    {
+        // --- 密度计算 (软边盒子) ---
+        // 计算当前点到盒子六个面的距离
+        float3 distToMin = currentPos - BoxMin;
+        float3 distToMax = BoxMax - currentPos;
+        
+        // 找出离得最近的那个面的距离 (修复了之前的 min 报错)
+        float minDistToMin = min(distToMin.x, min(distToMin.y, distToMin.z));
+        float minDistToMax = min(distToMax.x, min(distToMax.y, distToMax.z));
+        float distToWall = min(minDistToMin, minDistToMax);
+        
+        // 核心公式：在墙壁附近衰减，内部为 1
+        float density = saturate(distToWall / EdgeFadeDistance);
+        // -------------------------
+
+        // 累积密度 (InDensity 控制整体浓度)
+        // 注意：RayMarching 中累积必须乘以 stepSize 以保证不同步数下亮度一致
+        accumulatedDensity += density * InDensity * stepSize;
+
+        // 步进到下一个点
+        currentPos += LocalCamVec * stepSize;
+        
+        // 提前退出优化 (如果不透明度已满)
+        if(accumulatedDensity >= 1.0) 
+        {
+            accumulatedDensity = 1.0;
+            break;
+        }
+    }
+
+    // 4. 返回结果
+    // RGB = 颜色, A = 最终的不透明度
+    return float4(InFogColor, accumulatedDensity);
+}
