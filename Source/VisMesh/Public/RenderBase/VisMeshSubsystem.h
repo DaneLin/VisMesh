@@ -3,14 +3,14 @@
 #include "VisMeshSubsystem.generated.h"
 
 class UVisMeshComponentBase;
-class FIndirectPopulateSceneViewExtension;
+class FVisMeshSceneViewExtension;
 
 UCLASS()
 class UVisMeshSubsystem : public UWorldSubsystem
 {
 	GENERATED_BODY()
 public:
-	TSharedPtr<FIndirectPopulateSceneViewExtension, ESPMode::ThreadSafe> SceneViewExtension;
+	TSharedPtr<FVisMeshSceneViewExtension, ESPMode::ThreadSafe> SceneViewExtension;
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 

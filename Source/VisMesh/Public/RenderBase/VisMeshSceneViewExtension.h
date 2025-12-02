@@ -3,10 +3,10 @@
 
 class UVisMeshSubsystem;
 
-class FIndirectPopulateSceneViewExtension : public FWorldSceneViewExtension
+class FVisMeshSceneViewExtension : public FWorldSceneViewExtension
 {
 public:
-	FIndirectPopulateSceneViewExtension(const FAutoRegister& AutoReg, UWorld* InWorld, UVisMeshSubsystem* System);
+	FVisMeshSceneViewExtension(const FAutoRegister& AutoReg, UWorld* InWorld, UVisMeshSubsystem* System);
 	void Invalidate();
 
 	virtual void SetupViewFamily(FSceneViewFamily& InViewFamily) override {}

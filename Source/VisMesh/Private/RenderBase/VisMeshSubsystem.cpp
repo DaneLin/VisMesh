@@ -4,7 +4,7 @@
 
 void UVisMeshSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
-	SceneViewExtension = FSceneViewExtensions::NewExtension<FIndirectPopulateSceneViewExtension>(GetWorld(), this);
+	SceneViewExtension = FSceneViewExtensions::NewExtension<FVisMeshSceneViewExtension>(GetWorld(), this);
 	Super::Initialize(Collection);
 }
 

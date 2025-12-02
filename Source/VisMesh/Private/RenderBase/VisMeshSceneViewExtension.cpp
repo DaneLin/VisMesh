@@ -5,18 +5,18 @@
 #include "RenderBase/VisMeshSubsystem.h"
 
 
-FIndirectPopulateSceneViewExtension::FIndirectPopulateSceneViewExtension(const FAutoRegister& AutoReg, UWorld* InWorld,UVisMeshSubsystem* System)
+FVisMeshSceneViewExtension::FVisMeshSceneViewExtension(const FAutoRegister& AutoReg, UWorld* InWorld,UVisMeshSubsystem* System)
 	: FWorldSceneViewExtension(AutoReg, InWorld)
 	  , OwnerSystem(System)
 {
 }
 
-void FIndirectPopulateSceneViewExtension::Invalidate()
+void FVisMeshSceneViewExtension::Invalidate()
 {
 	OwnerSystem = nullptr;
 }
 
-void FIndirectPopulateSceneViewExtension::PreRenderViewFamily_RenderThread(FRDGBuilder& GraphBuilder, FSceneViewFamily& InViewFamily)
+void FVisMeshSceneViewExtension::PreRenderViewFamily_RenderThread(FRDGBuilder& GraphBuilder, FSceneViewFamily& InViewFamily)
 {
 	if (!IsValid(OwnerSystem)) return;
 
