@@ -5,6 +5,7 @@
 
 #include "Components/VisMeshProceduralComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Kismet/KismetMaterialLibrary.h"
 #include "Utils/KismetVisMeshLibrary.h"
 
 // Sets default values
@@ -25,6 +26,9 @@ AVisBarChart::AVisBarChart()
 	// 高亮组件也不需要碰撞
 	HighlightMeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	HighlightMeshComponent->SetVisibility(false); // 初始隐藏
+
+	SelectionMeshComponent = CreateDefaultSubobject<UVisMeshProceduralComponent>(TEXT("SelectionMesh"));
+	HighlightMeshComponent->SetupAttachment(RootComponent);
 }
 
 // Called when the game starts or when spawned
@@ -34,7 +38,7 @@ void AVisBarChart::BeginPlay()
 
 	// 测试数据
 	// --- 1. 生成 100,000 个随机测试数据 ---
-	const int32 NumData = 1000000;
+	const int32 NumData = 10000;
 	TArray<float> TestData;
 	TestData.SetNumUninitialized(NumData);
 
@@ -76,6 +80,57 @@ void AVisBarChart::BeginPlay()
 		PC->bShowMouseCursor = true;
 		PC->bEnableClickEvents = true;
 		PC->bEnableMouseOverEvents = true;
+
+		FInputModeGameAndUI InputMode;
+		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		InputMode.SetHideCursorDuringCapture(false);
+		PC->SetInputMode(InputMode);
+	}
+	
+	if (MainMeshMaterial)
+	{
+		MainMeshComponent->SetMaterial(0, MainMeshMaterial);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("请在蓝图中设置 MainMeshMaterial！"));
+	}
+
+	// 2. 初始化 MPC 参数 (防止参数残留)
+	if (ChartMPC)
+	{
+		// 确保一开始遮挡效果是关闭的
+		UKismetMaterialLibrary::SetScalarParameterValue(this, ChartMPC, FName("IsSelectionActive"), 0.0f);
+		// 重置目标位置到极远处
+		UKismetMaterialLibrary::SetVectorParameterValue(this, ChartMPC, FName("TargetPosition"), FLinearColor(0, 0, -10000));
+		// 重置半径 (可选)
+		UKismetMaterialLibrary::SetScalarParameterValue(this, ChartMPC, FName("CutoutRadius"), 1000);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("ChartMPC 未设置！无法使用遮挡交互。"));
+	}
+
+	{
+		TArray<FVector> BoxVerts;
+		TArray<int32> BoxTris;
+		TArray<FVector> BoxNormals;
+		TArray<FVector2D> BoxUVs;
+		TArray<FVisMeshTangent> BoxTangents;
+		UKismetVisMeshLibrary::GenerateBoxMesh(FVector(0.5f), BoxVerts, BoxTris, BoxNormals, BoxUVs, BoxTangents);
+        
+		// 设置为红色或其他醒目颜色
+		TArray<FColor> SelColors;
+		SelColors.Init(FColor::Red, BoxVerts.Num());
+
+		SelectionMeshComponent->CreateMeshSection(0, BoxVerts, BoxTris, BoxNormals, BoxUVs, BoxUVs, BoxUVs, BoxUVs, SelColors, BoxTangents, false);
+		SelectionMeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		SelectionMeshComponent->SetVisibility(false);
+
+		if (SelectionMeshMaterial)
+		{
+			SelectionMeshComponent->SetMaterial(0, SelectionMeshMaterial);
+		}
 	}
 }
 
@@ -93,9 +148,6 @@ void AVisBarChart::Tick(float DeltaTime)
 		FVector WorldLoc, WorldDir;
 		if (PC->DeprojectScreenPositionToWorld(MouseX, MouseY, WorldLoc, WorldDir))
 		{
-			// --- 关键修改：转到局部空间 ---
-			// 我们不求交平面，而是把整条射线转到 Actor 的局部空间
-			// 这样 RaycastOnBarChart 里的计算就不需要考虑 Actor 的旋转和缩放了
 			FTransform ActorTrans = GetTransform();
 			FVector LocalStart = ActorTrans.InverseTransformPosition(WorldLoc);
 			FVector LocalDir = ActorTrans.InverseTransformVectorNoScale(WorldDir);
@@ -130,17 +182,17 @@ void AVisBarChart::Tick(float DeltaTime)
 
 					LastHoverIndex = HoverIndex;
 				}
-				return;
+			}
+			else
+			{
+				HighlightMeshComponent->SetVisibility(false);
+				LastHoverIndex = -1;
 			}
 		}
 	}
 
-	// 未命中处理
-	if (LastHoverIndex != -1)
-	{
-		HighlightMeshComponent->SetVisibility(false);
-		LastHoverIndex = -1;
-	}
+	HandleClick();
+	
 }
 
 void AVisBarChart::GenerateBarChart(const TArray<float>& DataValues)
@@ -217,10 +269,73 @@ void AVisBarChart::GenerateBarChart(const TArray<float>& DataValues)
 
 	// 6. 提交到 GPU (注意：bCreateCollision = false)
 	MainMeshComponent->CreateMeshSection(0, MoveTemp(MeshData), false);
-	if (MainMeshMaterial)
-	{
-		MainMeshComponent->SetMaterial(0, MainMeshMaterial);
-	}
+}
+
+void AVisBarChart::HandleClick()
+{
+	APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0);
+    if (!PC) return;
+
+    // 检查左键是否刚刚按下
+    if (PC->WasInputKeyJustPressed(EKeys::LeftMouseButton))
+    {
+        // 复用之前的 Raycast 逻辑获取当前鼠标下的索引
+        // 注意：这里需要你把 Tick 里的 Raycast 逻辑稍微封装一下，或者直接复制过来
+        // 假设我们有一个成员变量 CurrentHoverIndex 记录了 Tick 中计算出的结果
+        int32 TargetIndex = LastHoverIndex; // LastHoverIndex 是我们在 Tick 里算的
+    	float MouseX, MouseY;
+    	if (!PC->GetMousePosition(MouseX, MouseY)) return;
+    	FVector WorldLoc, WorldDir;
+    	if (PC->DeprojectScreenPositionToWorld(MouseX, MouseY, WorldLoc, WorldDir))
+    	{
+    		FTransform ActorTrans = GetTransform();
+    		FVector LocalStart = ActorTrans.InverseTransformPosition(WorldLoc);
+    		FVector LocalDir = ActorTrans.InverseTransformVectorNoScale(WorldDir);
+			
+    		// 归一化方向（InverseTransformVectorNoScale 不保证归一化）
+    		LocalDir.Normalize();
+
+    		// --- 执行 Raycast ---
+    		TargetIndex = RaycastOnBarChart(LocalStart, LocalDir);
+    	}
+
+        if (TargetIndex != -1)
+        {
+            // --- 选中了新的柱子 ---
+            SelectedIndex = TargetIndex;
+
+            // 1. 更新选中网格位置 (和 Highlight 逻辑一样)
+            int32 Row = SelectedIndex / GridColumnCount;
+            int32 Col = SelectedIndex % GridColumnCount;
+            float XPos = Col * (BarWidth + BarGap);
+            float YPos = Row * (BarWidth + BarGap);
+            float RawHeight = CachedDataValues[SelectedIndex] * HeightMultiplier;
+            float FinalHeight = RawHeight; // 选中通常保持原高，或者也稍微放大
+
+            SelectionMeshComponent->SetRelativeLocation(FVector(XPos, YPos, FinalHeight * 0.5f));
+            // 同样应用微小的 Z-Fighting 偏移
+            float Bias = 1.02f; // 比 Highlight 更大一点点，防止重叠
+            SelectionMeshComponent->SetRelativeScale3D(FVector(BarWidth * Bias, BarWidth * Bias, FinalHeight));
+            SelectionMeshComponent->SetVisibility(true);
+
+            // 2. [核心] 更新材质参数以产生遮挡剔除效果
+        	FVector LocalPos = FVector(XPos, YPos, RawHeight * 0.5f);
+        	FVector WorldPos = MainMeshComponent->GetComponentTransform().TransformPosition(LocalPos);
+
+        	// 使用 KismetMaterialLibrary 更新全局参数集合
+        	UKismetMaterialLibrary::SetVectorParameterValue(this, ChartMPC, FName("TargetPosition"), FLinearColor(WorldPos)); // 注意 FVector 转 FLinearColor
+        	UKismetMaterialLibrary::SetScalarParameterValue(this, ChartMPC, FName("CutoutRadius"), 1000);
+        	UKismetMaterialLibrary::SetScalarParameterValue(this, ChartMPC, FName("IsSelectionActive"), 1.0f);
+        }
+        else
+        {
+            // --- 点击了空白处：取消选中 ---
+            SelectedIndex = -1;
+            SelectionMeshComponent->SetVisibility(false);
+
+        	UKismetMaterialLibrary::SetScalarParameterValue(this, ChartMPC, FName("IsSelectionActive"), 0.0f);
+        }
+    }
 }
 
 int32 AVisBarChart::RaycastOnBarChart(FVector LocalStart, FVector LocalDir) const

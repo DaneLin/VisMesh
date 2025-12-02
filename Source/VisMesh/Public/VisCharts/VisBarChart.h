@@ -42,6 +42,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "VisMesh")
 	UMaterialInterface* HighlightMeshMaterial;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "VisMesh")
+	UVisMeshProceduralComponent* SelectionMeshComponent;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VisMesh")
+	UMaterialInterface* SelectionMeshMaterial;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "VisMesh")
+	UMaterialParameterCollection* ChartMPC;
+
 	// --- 配置参数 ---
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chart Config")
@@ -82,6 +91,12 @@ private:
 
 	// 上一次悬停的索引
 	int32 LastHoverIndex = -1;
+
+	// 当前选中的索引 (-1 表示无)
+	int32 SelectedIndex = -1;
+
+	// 处理点击事件
+	void HandleClick();
 
 	int32 RaycastOnBarChart(FVector LocalStart, FVector LocalDir) const;
 };
