@@ -108,4 +108,12 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Components|VisMesh")
 	static void SliceVisMesh(UVisMeshProceduralComponent* InProcMesh, FVector PlanePosition, FVector PlaneNormal, bool bCreateOtherHalf, UVisMeshProceduralComponent*& OutOtherHalfProcMesh, EVisMeshSliceCapOption CapOption, UMaterialInterface* CapMaterial);
+
+	/** * Generate a wireframe-style box composed of 12 beam-like boxes.
+	 * Useful for selection highlights or debug visuals.
+	 * @param BoxRadius      The half-extents of the full bounding box (Center to Edge).
+	 * @param LineThickness  The width of the wireframe lines.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Components|VisMesh")
+	static void GenerateWireframeBoxMesh(FVector BoxRadius, float LineThickness, TArray<FVector>& Vertices, TArray<int32>& Triangles, TArray<FVector>& Normals, TArray<FVector2D>& UVs, TArray<FVisMeshTangent>& Tangents);
 };

@@ -1288,4 +1288,89 @@ void UKismetVisMeshLibrary::SliceVisMesh(UVisMeshProceduralComponent* InProcMesh
 	}
 }
 
+void UKismetVisMeshLibrary::GenerateWireframeBoxMesh(FVector BoxRadius, float LineThickness, TArray<FVector>& Vertices,
+	TArray<int32>& Triangles, TArray<FVector>& Normals, TArray<FVector2D>& UVs, TArray<FVisMeshTangent>& Tangents)
+{
+	Vertices.Reset();
+    Triangles.Reset();
+    Normals.Reset();
+    UVs.Reset();
+    Tangents.Reset();
+
+    TArray<FVector> TemplateVerts;
+    TArray<int32> TemplateTris;
+    TArray<FVector> TemplateNormals;
+    TArray<FVector2D> TemplateUVs;
+    TArray<FVisMeshTangent> TemplateTangents;
+    
+    // 生成一个边长为1的立方体 (Radius 0.5)
+    GenerateBoxMesh(FVector(0.5f), TemplateVerts, TemplateTris, TemplateNormals, TemplateUVs, TemplateTangents);
+
+    struct FBeamTransform
+    {
+        FVector Pos;
+        FVector Scale;
+    };
+
+    TArray<FBeamTransform> Beams;
+    Beams.Reserve(12);
+
+    float X = BoxRadius.X;
+    float Y = BoxRadius.Y;
+    float Z = BoxRadius.Z;
+    float T = LineThickness;
+
+    // 4根立柱 (Z轴方向)
+    Beams.Add({ FVector( X,  Y, 0), FVector(T, T, Z * 2) });
+    Beams.Add({ FVector( X, -Y, 0), FVector(T, T, Z * 2) });
+    Beams.Add({ FVector(-X,  Y, 0), FVector(T, T, Z * 2) });
+    Beams.Add({ FVector(-X, -Y, 0), FVector(T, T, Z * 2) });
+
+    // 4根顶部横梁 (Z = +Z)
+    Beams.Add({ FVector(0,  Y, Z), FVector(X * 2, T, T) }); // Top Front
+    Beams.Add({ FVector(0, -Y, Z), FVector(X * 2, T, T) }); // Top Back
+    Beams.Add({ FVector( X, 0, Z), FVector(T, Y * 2, T) }); // Top Right (注意：如果不想重叠角落，可以用 Y*2 - T*2)
+    Beams.Add({ FVector(-X, 0, Z), FVector(T, Y * 2, T) }); // Top Left
+
+    // 4根底部横梁 (Z = -Z)
+    Beams.Add({ FVector(0,  Y, -Z), FVector(X * 2, T, T) }); 
+    Beams.Add({ FVector(0, -Y, -Z), FVector(X * 2, T, T) });
+    Beams.Add({ FVector( X, 0, -Z), FVector(T, Y * 2, T) });
+    Beams.Add({ FVector(-X, 0, -Z), FVector(T, Y * 2, T) });
+
+    // 3. 组装网格 (Batching)
+    int32 NumTemplateVerts = TemplateVerts.Num();
+    int32 NumTemplateTris = TemplateTris.Num();
+
+    // 预分配内存 (12 * 24 = 288 verts)
+    Vertices.Reserve(12 * NumTemplateVerts);
+    Triangles.Reserve(12 * NumTemplateTris);
+
+    for (const FBeamTransform& Beam : Beams)
+    {
+        int32 BaseVertIndex = Vertices.Num();
+
+        // 复制并变换顶点
+        for (int32 i = 0; i < NumTemplateVerts; i++)
+        {
+            // Position: Scale * Template + Offset
+            Vertices.Add(Beam.Pos + (TemplateVerts[i] * Beam.Scale));
+            
+            // Normals: 不需要旋转，因为我们做的是轴对齐的缩放盒子，
+            // 且 GenerateBoxMesh 生成的是硬边法线(轴向)。
+            // 如果梁被非均匀缩放非常严重，法线可能需要重归一化，但对于纯色线框通常可以忽略。
+            Normals.Add(TemplateNormals[i]);
+            
+            UVs.Add(TemplateUVs[i]);
+            Tangents.Add(TemplateTangents[i]);
+        }
+
+        // 复制并偏移三角形索引
+        for (int32 Index : TemplateTris)
+        {
+            Triangles.Add(BaseVertIndex + Index);
+        }
+    }
+}
+
 #undef LOCTEXT_NAMESPACE

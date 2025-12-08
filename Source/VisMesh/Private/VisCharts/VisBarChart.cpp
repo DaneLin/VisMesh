@@ -104,7 +104,7 @@ void AVisBarChart::BeginPlay()
 		// 重置目标位置到极远处
 		UKismetMaterialLibrary::SetVectorParameterValue(this, ChartMPC, FName("TargetPosition"), FLinearColor(0, 0, -10000));
 		// 重置半径 (可选)
-		UKismetMaterialLibrary::SetScalarParameterValue(this, ChartMPC, FName("CutoutRadius"), 1000);
+		UKismetMaterialLibrary::SetScalarParameterValue(this, ChartMPC, FName("CutoutRadius"), 2000);
 	}
 	else
 	{
@@ -119,11 +119,6 @@ void AVisBarChart::BeginPlay()
 		TArray<FVisMeshTangent> BoxTangents;
 		UKismetVisMeshLibrary::GenerateBoxMesh(FVector(0.5f), BoxVerts, BoxTris, BoxNormals, BoxUVs, BoxTangents);
         
-		// 设置为红色或其他醒目颜色
-		TArray<FColor> SelColors;
-		SelColors.Init(FColor::Red, BoxVerts.Num());
-
-		SelectionMeshComponent->CreateMeshSection(0, BoxVerts, BoxTris, BoxNormals, BoxUVs, BoxUVs, BoxUVs, BoxUVs, SelColors, BoxTangents, false);
 		SelectionMeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		SelectionMeshComponent->SetVisibility(false);
 
@@ -312,19 +307,23 @@ void AVisBarChart::HandleClick()
             float RawHeight = CachedDataValues[SelectedIndex] * HeightMultiplier;
             float FinalHeight = RawHeight; // 选中通常保持原高，或者也稍微放大
 
-            SelectionMeshComponent->SetRelativeLocation(FVector(XPos, YPos, FinalHeight * 0.5f));
-            // 同样应用微小的 Z-Fighting 偏移
-            float Bias = 1.02f; // 比 Highlight 更大一点点，防止重叠
-            SelectionMeshComponent->SetRelativeScale3D(FVector(BarWidth * Bias, BarWidth * Bias, FinalHeight));
-            SelectionMeshComponent->SetVisibility(true);
+        	SelectionMeshComponent->SetRelativeLocation(FVector(XPos, YPos, 0.0f));
+            
+        	// 重置缩放为 1 (所有的尺寸在网格生成时计算)
+        	SelectionMeshComponent->SetRelativeScale3D(FVector(1.0f));
+        	float FrameGap = 2.0f; 
+        	float LineThickness = 5.0f; // 线条粗细
+        	GenerateSelectionFrame(BarWidth + FrameGap, FinalHeight + FrameGap, LineThickness);
+            
+        	SelectionMeshComponent->SetVisibility(true);
 
             // 2. [核心] 更新材质参数以产生遮挡剔除效果
-        	FVector LocalPos = FVector(XPos, YPos, RawHeight * 0.5f);
+        	FVector LocalPos = FVector(XPos, YPos, 0);
         	FVector WorldPos = MainMeshComponent->GetComponentTransform().TransformPosition(LocalPos);
 
         	// 使用 KismetMaterialLibrary 更新全局参数集合
         	UKismetMaterialLibrary::SetVectorParameterValue(this, ChartMPC, FName("TargetPosition"), FLinearColor(WorldPos)); // 注意 FVector 转 FLinearColor
-        	UKismetMaterialLibrary::SetScalarParameterValue(this, ChartMPC, FName("CutoutRadius"), 1000);
+        	UKismetMaterialLibrary::SetScalarParameterValue(this, ChartMPC, FName("CutoutRadius"), 2000);
         	UKismetMaterialLibrary::SetScalarParameterValue(this, ChartMPC, FName("IsSelectionActive"), 1.0f);
         }
         else
@@ -412,5 +411,78 @@ int32 AVisBarChart::RaycastOnBarChart(FVector LocalStart, FVector LocalDir) cons
 	}
 
 	return -1;
+}
+
+void AVisBarChart::GenerateSelectionFrame(float Width, float Height, float Thickness)
+{
+	{
+        TArray<FVector> WireVerts;
+        TArray<int32> WireTris;
+        TArray<FVector> WireNormals;
+        TArray<FVector2D> WireUVs;
+        TArray<FVisMeshTangent> WireTangents;
+
+        // 计算 Radius (半长)
+        FVector BoxRadius(Width * 0.5f, Width * 0.5f, Height * 0.5f);
+
+        // 调用库函数生成线框
+        UKismetVisMeshLibrary::GenerateWireframeBoxMesh(BoxRadius, Thickness, WireVerts, WireTris, WireNormals, WireUVs, WireTangents);
+
+        // 颜色填充
+        TArray<FColor> WireColors;
+        WireColors.Init(FColor::White, WireVerts.Num());
+
+        // 偏移 Z 轴 (将中心点从 0 移到 Height/2)
+        float ZOffset = Height * 0.5f;
+        for (FVector& V : WireVerts)
+        {
+            V.Z += ZOffset;
+        }
+
+        // 创建 Section 0
+        SelectionMeshComponent->CreateMeshSection(0, WireVerts, WireTris, WireNormals, WireUVs, WireUVs, WireUVs, WireUVs, WireColors, WireTangents, false);
+        
+        // 确保 Section 0 使用线框材质
+        if (SelectionMeshMaterial)
+        {
+            SelectionMeshComponent->SetMaterial(0, SelectionMeshMaterial);
+        }
+    }
+
+    {
+        TArray<FVector> SolidVerts;
+        TArray<int32> SolidTris;
+        TArray<FVector> SolidNormals;
+        TArray<FVector2D> SolidUVs;
+        TArray<FVisMeshTangent> SolidTangents;
+
+        // 生成实心盒子 (注意：GenerateBoxMesh 接受的是 Radius/半长)
+        // 我们希望实体稍微比线框小一点点，或者正好填满。
+        // 由于 HandleClick 传入的 Width 已经包含了 Gap，这里直接使用即可填满线框内部。
+        FVector SolidExtents(Width * 0.5f, Width * 0.5f, Height * 0.5f);
+        
+        UKismetVisMeshLibrary::GenerateBoxMesh(SolidExtents, SolidVerts, SolidTris, SolidNormals, SolidUVs, SolidTangents);
+
+        // 颜色填充
+        TArray<FColor> SolidColors;
+        SolidColors.Init(FColor::White, SolidVerts.Num());
+
+        // 同样偏移 Z 轴
+        float ZOffset = Height * 0.5f;
+        for (FVector& V : SolidVerts)
+        {
+            V.Z += ZOffset;
+        }
+
+        // 创建 Section 1
+        // 注意：这里 SectionIndex 是 1
+        SelectionMeshComponent->CreateMeshSection(1, SolidVerts, SolidTris, SolidNormals, SolidUVs, SolidUVs, SolidUVs, SolidUVs, SolidColors, SolidTangents, false);
+
+        // 设置材质为 HighlightMeshMaterial
+        if (HighlightMeshMaterial)
+        {
+            SelectionMeshComponent->SetMaterial(1, HighlightMeshMaterial);
+        }
+    }
 }
 

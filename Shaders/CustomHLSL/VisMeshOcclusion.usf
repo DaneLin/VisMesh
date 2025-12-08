@@ -1,41 +1,119 @@
 ﻿// VisMeshOcclusion.ush
-// 计算视线遮挡剔除因子
+// 计算视线遮挡剔除因子 (返回 0.0~1.0 的梯度值，供 Dither 使用)
+
+// CamPos: 相机位置 (起点)
+// TargetPos: 目标位置 (终点)
+// PixPos: 当前像素世界坐标
+// RadiusStart: 相机端的遮挡半径 (建议很小，如 5.0f - 10.0f)
+// RadiusEnd: 目标端的遮挡半径 (建议覆盖角色，如 60.0f - 80.0f)
+// FadeDist: 纵向淡出距离 (保护目标不被剔除)
+float CalculateTaperedCapsuleOcclusion(float3 CamPos, float3 TargetPos, float3 PixPos, float RadiusStart, float RadiusEnd, float FadeDist, float Active)
+{
+	// 0. 快速剔除
+	if (Active < 0.5f) return 0.0f;
+
+	// 1. 向量准备
+	float3 pa = PixPos - CamPos;
+	float3 ba = TargetPos - CamPos;
+    
+	float baLengthSq = dot(ba, ba);
+	if (baLengthSq < 0.001f) return 0.0f; // 防止重合
+
+	// 2. 计算点在线段上的投影比例 (h)
+	// h = 0.0 表示在 CamPos，h = 1.0 表示在 TargetPos
+	// clamp 保证了我们是在计算“线段”而非“直线”，这天然形成了胶囊体的两端
+	float h = clamp(dot(pa, ba) / baLengthSq, 0.0f, 1.0f);
+
+	// 3. 计算像素距离线段轴心的垂直距离
+	float3 AxisPoint = ba * h; // 轴线上的最近点（相对于CamPos的偏移）
+	float DistToAxis = length(pa - AxisPoint);
+
+	// 4. 计算当前的动态半径 (Tapered Radius)
+	// 根据投影位置 h，在起始半径和结束半径之间插值
+	// 这让形状变成了圆台/锥体，更符合视线逻辑
+	float CurrentRadius = lerp(RadiusStart, RadiusEnd, h);
+
+	// 5. 径向衰减 (Radial Falloff)
+	// 如果在半径外，Factor 为 0
+	if (DistToAxis > CurrentRadius) return 0.0f;
+
+	float RadialFactor = 1.0f - (DistToAxis / CurrentRadius);
+	RadialFactor = smoothstep(0.0f, 1.0f, RadialFactor);
+
+	// 6. 纵向保护 (Longitudinal Falloff - 解决越近越空)
+	// 利用 h 值直接计算。
+	// h 越接近 1.0，说明越接近目标。
+    
+	// 计算像素沿轴线距离目标的距离 (近似值，性能最高)
+	float DistToTargetApprox = length(ba) * (1.0f - h);
+    
+	// 或者更精确地使用像素到目标的真实距离：
+	// float DistToTargetReal = length(PixPos - TargetPos);
+
+	float LongitudinalFactor = saturate(DistToTargetApprox / max(FadeDist, 0.001f));
+
+	// 7. 综合输出
+	return RadialFactor * LongitudinalFactor;
+}
 
 float CalculateSightlineOcclusion(float3 CamPos, float3 TargetPos, float3 PixPos, float Radius, float Active)
 {
+	// 0. 早期退出：如果未激活，直接返回实体
+	if (Active < 0.5f) return 0.0f;
+
 	// 1. 基础向量计算
 	float3 LineVec = TargetPos - CamPos;
 	float TargetDist = length(LineVec);
 
-	// 防止除以0
-	if (TargetDist < 0.001)
-	{
-		return 0.0f;
-	}
+	if (TargetDist < 0.001f) return 0.0f;
 
 	float3 LineDir = LineVec / TargetDist;
 	float3 PixVec = PixPos - CamPos;
 
 	// 2. 投影计算
-	// 像素在视线轴上的投影长度
 	float ProjectedDist = dot(PixVec, LineDir);
-
-	// 视线上离像素最近的点
 	float3 ClosestPoint = CamPos + (LineDir * ProjectedDist);
-    
-	// 像素距离视线轴的垂直距离
 	float DistToLine = length(PixPos - ClosestPoint);
 
-	// 3. 逻辑判断
-	// Active: 开关
-	// DistToLine < Radius: 在圆柱体通道内
-	// ProjectedDist < TargetDist: 在目标前面 (不剔除目标背后的背景)
-	// ProjectedDist > 0: 在相机前面 (不剔除相机背后的物体)
+	// 3. 核心计算 (不再使用 if/else 硬切)
     
-	if (Active > 0.5f && DistToLine < Radius && ProjectedDist < TargetDist && ProjectedDist > 0.0f)
-	{
-		return 1.0f; // 返回 1.0 表示“被遮挡/需要透明”
-	}
+	// A. 径向因子 (Radial Factor): 
+	// 计算距离轴心的归一化距离。0表示在轴心，1表示在半径边缘。
+	// 使用 saturate 截断，防止负值。
+	float RadialRatio = saturate(DistToLine / Radius);
+    
+	// 反转并计算强度：离轴心越近(Ratio小)，值越大。
+	// 使用 pow(x, 2.0) 或 smoothstep 让边缘过渡更柔和，产生更好的 Dither 散点分布。
+	float RadialMask = 1.0f - smoothstep(0.0f, 1.0f, RadialRatio);
 
-	return 0.0f; // 返回 0.0 表示“保持实体”
+	// B. 纵向因子 (Longitudinal Factor) - 解决“靠近目标空白”的问题
+	// 我们需要定义两个淡出区间：
+	// 1. 相机淡出 (CameraFade): 防止相机极近处的物体突然消失
+	// 2. 目标淡出 (TargetFade): 防止目标附近的地面或物体被剔除
+    
+	float FadeLength = 100.0f; // 这里的单位取决于你的项目（如厘米），建议作为参数传入
+    
+	// 靠近相机的淡入 (0 -> 1)
+	float CamFade = saturate(ProjectedDist / FadeLength);
+    
+	// 靠近目标的淡出 (1 -> 0)
+	// 当 ProjectedDist 接近 TargetDist 时，这个值会变小
+	float TargetFade = saturate((TargetDist - ProjectedDist) / FadeLength);
+    
+	// 综合纵向掩码：必须在相机前，必须在目标后 (隐式包含在 TargetFade 正负判断中)
+	float LongMask = CamFade * TargetFade;
+
+	// 4. 边界裁剪
+	// 确保只处理视线段内的像素
+	float SegmentMask = (ProjectedDist > 0.0f && ProjectedDist < TargetDist) ? 1.0f : 0.0f;
+
+	// 5. 最终合成
+	// RadialMask 提供软边缘，LongMask 提供两端保护
+	// 结果范围 0.0 (保持实体) ~ 1.0 (最强遮挡/透明)
+	float FinalOcclusion = RadialMask * LongMask * SegmentMask;
+
+	// 可选：增加一个最大不透明度钳制，如果你不希望物体完全消失，只希望它变半透明
+	FinalOcclusion = min(FinalOcclusion, 0.9f); 
+
+	return FinalOcclusion;
 }
