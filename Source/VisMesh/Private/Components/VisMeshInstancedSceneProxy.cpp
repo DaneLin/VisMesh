@@ -251,66 +251,23 @@ void FVisMeshInstancedSceneProxy::DispatchComputePass_RenderThread(FRDGBuilder& 
 	if (PositionBuffer && IndirectArgsBuffer && InstanceBuffer)
 	{
 		const float CurrentTime = ViewFamily.Time.GetRealTimeSeconds();
-		// 1. 注册外部资源 (前提：IndirectArgsBuffer 类型已改为 TRefCountPtr<FRDGPooledBuffer>)
-		FRDGBufferRef IndirectArgsRDG = GraphBuilder.RegisterExternalBuffer(IndirectArgsBuffer);
-
-		// ===================================================================================
-		// 直接重置 IndirectBuffer 全部内容
-		// ===================================================================================
-
-		// A. 准备复位数据 (恢复成 DrawIndirect 需要的初始值)
-		FRHIDrawIndirectParameters InitData;
-		InitData.VertexCountPerInstance = GNumVertsPerBox; // 保持 36 (或你的顶点数)
-		InitData.InstanceCount = 0;                        // 重置为 0
-		InitData.StartVertexLocation = 0;
-		InitData.StartInstanceLocation = 0;
-
-		// B. 创建上传 Buffer (利用 RenderGraphUtils 中的辅助函数)
-		// CreateUploadBuffer 会自动处理内存分配和上传队列
-		FRDGBufferRef ResetBuffer = CreateUploadBuffer(
-			GraphBuilder,
-			TEXT("VisMeshIndirectReset"),
-			sizeof(FRHIDrawIndirectParameters),
-			1,          // 元素数量
-			&InitData,  // 初始数据指针
-			sizeof(InitData) // 数据大小
-		);
-
-		// C. 执行复制 (利用 RenderGraphUtils 中的辅助函数)
-		// 这将 ResetBuffer 的内容完整覆盖到 IndirectArgsRDG
-		AddCopyBufferPass(GraphBuilder, IndirectArgsRDG, ResetBuffer);
-
-		FRDGBufferUAVRef IndirectArgsUAVRDG = GraphBuilder.CreateUAV(IndirectArgsRDG, PF_R32_UINT);
 		
 		// 1. 获取主视图的 ViewProjectionMatrix
 		FMatrix ViewProjMatrix = FMatrix::Identity;
 		if (ViewFamily.Views.Num() > 0)
 		{
 			const FSceneView* MainView = ViewFamily.Views[0];
-
-			// 1. 获取 "Translated World" -> "Clip" 矩阵
-			// (UE5 使用 LWC，渲染时会将世界原点移到摄像机附近，称为 Translated World)
-			FMatrix TranslatedViewProj = MainView->ViewMatrices.GetViewProjectionMatrix();
-            
-			// 2. 获取 PreViewTranslation (世界原点 -> Translated World 原点的位移)
-			FVector PreViewTranslation = MainView->ViewMatrices.GetPreViewTranslation();
-            
-			// 3. 构建 "Local" -> "Translated World" 矩阵
-			// 逻辑：Local -> Absolute World -> (加上 PreViewTranslation) -> Translated World
-			// 注意乘法顺序：LocalToWorld * Translation
-			FMatrix LocalToTranslatedWorld = GetLocalToWorld() * FTranslationMatrix(PreViewTranslation);
-
-			// 4. 最终合并：Local -> Clip
-			// 逻辑：LocalToTranslatedWorld * TranslatedViewProj
-			ViewProjMatrix = LocalToTranslatedWorld * TranslatedViewProj;
+			ViewProjMatrix = MainView->ViewMatrices.GetViewProjectionMatrix();
 		}
 		FMatrix44f ViewProjectionMatrix = FMatrix44f(ViewProjMatrix.GetTransposed());
+
+		FMatrix44f ModelMatrix = FMatrix44f(GetLocalToWorld());
 		// 调用具体的 Pass 添加函数 (这个函数可以是静态的，或者 VisMeshUtils 里的)
 		AddBoxChartFrustumCulledInstancePass(GraphBuilder,
 									InstanceBuffer->GetOriginUAV(),
 		                          InstanceBuffer->GetTransformUAV(), // 传入 Instance Buffer UAV
-		                          IndirectArgsUAVRDG,
-		                          XSpace, YSpace, NumColumns, NumInstances, CurrentTime,ViewProjectionMatrix
+		                          IndirectArgsBufferUAV,
+		                          XSpace, YSpace, NumColumns, NumInstances, CurrentTime,ViewProjectionMatrix, ModelMatrix
 		);
 	}
 }

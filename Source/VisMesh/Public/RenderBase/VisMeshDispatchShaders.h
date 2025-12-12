@@ -62,7 +62,7 @@ public:
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, VISMESH_API)
 		SHADER_PARAMETER_UAV(RWBuffer<float4>, OutInstanceOriginBuffer)
 		SHADER_PARAMETER_UAV(RWBuffer<float4>, OutInstanceTransforms)
-		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, OutIndirectArgs)
+		SHADER_PARAMETER_UAV(RWBuffer<uint>, OutIndirectArgs)
 
 		SHADER_PARAMETER(float, XSpace)
 		SHADER_PARAMETER(float, YSpace)
@@ -70,6 +70,7 @@ public:
 		SHADER_PARAMETER(int, NumInstances)
 		SHADER_PARAMETER(float, Time)
 		SHADER_PARAMETER(FMatrix44f, ViewProjectionMatrix)
+		SHADER_PARAMETER(FMatrix44f, ModelMatrix)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment);

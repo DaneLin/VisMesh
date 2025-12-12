@@ -1,0 +1,213 @@
+// MyRayMarching.hlsl - 截面体积投影版
+
+float GetSeabedHeight(float3 p) {
+    return -50.0 + sin(p.x * 0.02) * 20.0 + sin(p.y * 0.035) * 15.0; 
+}
+
+// 纹理采样
+float GetVolumeTemperature(float3 p, float3 boxExtent, Texture3D volTex, SamplerState volSampler) {
+    float3 uvw = (p + boxExtent) / (boxExtent * 2.0);
+    uvw = saturate(uvw); // 钳制防止采样溢出
+    return volTex.SampleLevel(volSampler, uvw, 0).r;
+}
+
+// 颜色映射
+float3 GetHeatmapColor(float t) {
+    float3 colDeep = float3(0.0, 0.05, 0.8); 
+    float3 colMid  = float3(0.0, 0.9, 0.5);  
+    float3 colTop  = float3(1.0, 0.1, 0.05); 
+    
+    float3 col = float3(0,0,0);
+    if(t < 0.5) col = lerp(colDeep, colMid, t * 2.0);
+    else col = lerp(colMid, colTop, (t - 0.5) * 2.0);
+    return col;
+}
+
+// --- 2. SDF 定义 ---
+float GetDist(float3 p, float3 boxSize, float3 sliceN, float sliceO) {
+    float3 size = boxSize * 0.98; 
+    float3 q = abs(p) - size;
+    float dBox = length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+    float dPlane = dot(p, normalize(sliceN)) - sliceO;
+    return max(dBox, dPlane);
+}
+
+// rayStart: 截面击中点
+// rayDir: 视线方向
+// maxDist: 剩余可行走的距离 (直到穿出盒子)
+// stepSize: 用户设定的特定步长
+float3 CalculateSliceProjection(float3 rayStart, float3 rayDir, float maxDist, float stepSize, float3 boxSize, Texture3D volTex, SamplerState volSampler, out float outAlpha) {
+    
+    float3 accumColor = float3(0,0,0);
+    float accumAlpha = 0.0;
+    
+    // 限制最大步数防止死循环 (假设物体最大尺寸500，最小步长1，500步足够)
+    // 实际步数 = maxDist / stepSize
+    int maxSteps = 128; 
+    
+    float t = 0.0;
+    
+    // 抖动 (Dither) - 消除采样纹路
+    float dither = frac(sin(dot(rayStart.xy, float2(12.9898,78.233))) * 43758.5453);
+    t += stepSize * dither;
+
+    for(int i = 0; i < maxSteps; i++) {
+        // 如果走出了盒子，或者已经完全不透明了，停止
+        if(t > maxDist || accumAlpha >= 1.0) break;
+        
+        float3 currPos = rayStart + rayDir * t;
+        
+        // 采样温度
+        float temp = GetVolumeTemperature(currPos, boxSize, volTex, volSampler);
+        float3 col = GetHeatmapColor(temp);
+        
+        // 这里的密度系数非常重要
+        // 如果步长很大，单次采样的贡献应该更重？还是保持一致？
+        // 通常 Volume Rendering 公式： Alpha = 1 - exp(-density * stepSize)
+        // 这里我们简化：步长越大，积累越快
+        float density = 0.05; // 基础密度
+        float currentAlpha = density * stepSize; 
+        
+        // 发光强度 (根据温度)
+        float emission = 0.1 + temp * 0.5;
+        
+        // 前后混合 (Front-to-Back Blending)
+        // Color += SourceColor * SourceAlpha * (1 - AccumulatedAlpha)
+        accumColor += col * emission * currentAlpha * (1.0 - accumAlpha);
+        accumAlpha += currentAlpha;
+        
+        t += stepSize;
+    }
+    
+    outAlpha = saturate(accumAlpha * 2.0); // 增强一点不透明度
+    return accumColor;
+}
+
+// 这是从摄像机到截面之间的雾，保持不变
+float3 CalculateVolumetricFog(float3 rayStart, float3 rayDir, float distToHit, float3 boxSize, Texture3D volTex, SamplerState volSampler, out float outAlpha) {
+    float3 fogAccumulation = float3(0,0,0);
+    float alphaAccumulation = 0.0;
+    
+    int steps = 16;  
+    float stepSize = distToHit / float(steps);
+    float density = 0.02; 
+    float currentDist = 0.0;
+    
+    // Dither
+    float dither = frac(sin(dot(rayStart.xy, float2(12.9898,78.233))) * 43758.5453);
+    currentDist += stepSize * dither;
+
+    for(int i = 0; i < steps; i++) {
+        float3 samplePos = rayStart + rayDir * currentDist;
+        float temp = GetVolumeTemperature(samplePos, boxSize, volTex, volSampler);
+        float3 color = GetHeatmapColor(temp);
+        float emission = 0.2 + temp * 0.6; 
+        
+        fogAccumulation += emission * color * density * stepSize;
+        alphaAccumulation += density * stepSize;
+        currentDist += stepSize;
+    }
+    outAlpha = 1.0 - exp(-alphaAccumulation * 2.0);
+    return fogAccumulation;
+}
+
+float2 RayBoxIntersection(float3 ro, float3 rd, float3 rad) {
+    float3 m = 1.0 / rd;
+    float3 n = m * ro;
+    float3 k = abs(m) * rad;
+    float3 t1 = -n - k;
+    float3 t2 = -n + k;
+    float tN = max(max(t1.x, t1.y), t1.z);
+    float tF = min(min(t2.x, t2.y), t2.z);
+    if(tN > tF || tF < 0.0) return float2(-1.0, -1.0);
+    return float2(tN, tF);
+}
+
+struct RayMarcher {
+    float3 LocalRo;
+    float3 LocalRd;
+    float3 BoxExtent;
+    float3 SliceNormal; 
+    float SliceOffset;
+    Texture3D VolTexture;
+    SamplerState VolSampler;
+    
+    // [新增] 混合步长
+    float MixingStep; // 用户输入的采样步长
+
+    float4 Run() {
+        // 1. 盒子范围
+        float2 tBox = RayBoxIntersection(LocalRo, LocalRd, BoxExtent);
+        float tNear = tBox.x;
+        float tFar = tBox.y;
+
+        if(tNear < 0.0 && tFar < 0.0) return float4(0,0,0,0);
+
+        float dO = max(0.0, tNear);
+        bool hit = false;
+        bool insideSolid = false; 
+
+        // 2. 初始位置检测
+        float startDist = GetDist(LocalRo + LocalRd * dO, BoxExtent, SliceNormal, SliceOffset);
+        if (startDist < 0.0) {
+            insideSolid = true;
+        }
+
+        // 3. 寻找截面表面 (Ray Marching)
+        if (!insideSolid) {
+            for(int i = 0; i < 96; i++) {
+                if(dO > tFar) break;
+                float3 p = LocalRo + LocalRd * dO;
+                float dS = GetDist(p, BoxExtent, SliceNormal, SliceOffset);
+                dO += abs(dS);
+                if(dS < 0.01) { hit = true; break; }
+            }
+        } else {
+            // 如果已经在内部，直接视为击中，从当前位置开始投影
+            hit = true;
+        }
+
+        // 4. 计算距离参数
+        float marchEnd = hit ? dO : tFar;
+        float distToSurface = marchEnd - max(0.0, tNear); // 摄像机到截面的距离
+        float distBehindSurface = tFar - marchEnd;       // 截面到盒子背面的距离
+
+        float3 finalColor = float3(0,0,0);
+        float combinedAlpha = 0.0;
+
+        // --- A. 计算前景雾 (摄像机到截面) ---
+        float fogAlpha = 0.0;
+        float3 startPos = LocalRo + LocalRd * max(0.0, tNear);
+        float3 frontFog = CalculateVolumetricFog(startPos, LocalRd, distToSurface, BoxExtent, VolTexture, VolSampler, fogAlpha);
+        
+        finalColor += frontFog;
+        combinedAlpha += fogAlpha;
+
+        // --- B. 计算截面投影 (核心需求) ---
+        // 只有击中截面(或身在内部)时才计算
+        if(hit) {
+            float3 hitPos = LocalRo + LocalRd * dO;
+            
+            // [关键] 使用用户输入的 MixingStep 进行后续采样
+            // 确保步长有效，防止死循环
+            float safeStep = max(MixingStep, 0.5); 
+            
+            float sliceAlpha = 0.0;
+            float3 sliceColor = CalculateSliceProjection(hitPos, LocalRd, distBehindSurface, safeStep, BoxExtent, VolTexture, VolSampler, sliceAlpha);
+            
+            // 混合逻辑：前景雾 + (截面投影 * (1 - 前景雾透明度))
+            finalColor += sliceColor * (1.0 - combinedAlpha);
+            
+            // 累加 Alpha
+            combinedAlpha += sliceAlpha * (1.0 - combinedAlpha);
+        }
+
+        // 钳制防止过曝
+        finalColor = min(finalColor, float3(5.0, 5.0, 5.0));
+        
+        // 确保底色不全黑
+        if (insideSolid) combinedAlpha = max(combinedAlpha, 0.2);
+
+        return float4(finalColor, saturate(combinedAlpha));
+    }
+};

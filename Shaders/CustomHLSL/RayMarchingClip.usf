@@ -1,0 +1,136 @@
+// --- 1. 模拟温度场数据 ---
+// 输入空间坐标 p，返回 0.0 ~ 1.0 的温度值
+float GetTemperature(float3 p)
+{
+    // 这里我们用数学模拟：越靠近中心越热
+    // 假设物体半径大概是 50，我们归一化一下
+    float dist = length(p);
+    float temp = 1.0 - saturate(dist / 50.0);
+    
+    // 你也可以加上一些 Noise 让它看起来更像真实的云图
+    // temp += sin(p.x * 0.2) * 0.1; 
+    
+    return saturate(temp);
+}
+
+// --- 2. 温度转颜色 (Heatmap) ---
+float3 GetHeatmapColor(float t)
+{
+    // 简单的冷暖色阶：蓝 -> 绿 -> 红
+    float3 a = float3(0.0, 0.0, 1.0); // 0.0: 蓝
+    float3 b = float3(0.0, 1.0, 0.0); // 0.5: 绿
+    float3 c = float3(1.0, 0.0, 0.0); // 1.0: 红
+    
+    if (t < 0.5)
+        return lerp(a, b, t * 2.0);
+    else
+        return lerp(b, c, (t - 0.5) * 2.0);
+}
+
+// --- 3. SDF 定义 (带切割) ---
+// 返回 float2: x = 距离, y = 材质ID (0=外壳, 1=截面)
+float2 GetDistAndMat(float3 p, float3 sliceNormal, float sliceOffset)
+{
+    // A. 定义物体 (比如一个中心有空洞的复杂结构，方便看截面)
+    float dSphere = length(p) - 50.0;
+    float dHole = length(p.xy) - 20.0; // 中间挖个洞
+    float dObj = max(dSphere, -dHole);
+    
+    // B. 定义切割平面
+    // 平面方程: dot(p, n) - dist
+    float dPlane = dot(p, normalize(sliceNormal)) - sliceOffset;
+    
+    // C. 布尔运算: 切割 (Intersection / Subtraction)
+    // 使用 max(Obj, Plane) 可以保留平面"后面"的部分，相当于切掉前面
+    float dFinal = max(dObj, dPlane);
+    
+    // D. 材质判定
+    // 如果最终距离主要是由平面决定的，那说明我们就在截面上
+    float matID = 0.0; // 默认是外壳
+    
+    // 这里的 0.01 是一个容差值
+    if (abs(dFinal - dPlane) < 0.001) 
+    {
+        matID = 1.0; // 标记为截面
+    }
+    
+    return float2(dFinal, matID);
+}
+
+// --- 4. 法线计算 (通用) ---
+float3 GetNormal(float3 p, float3 n, float o)
+{
+    float d = GetDistAndMat(p, n, o).x;
+    float2 e = float2(0.1, 0);
+    float3 normal = d - float3(
+        GetDistAndMat(p - e.xyy, n, o).x,
+        GetDistAndMat(p - e.yxy, n, o).x,
+        GetDistAndMat(p - e.yyx, n, o).x
+    );
+    return normalize(normal);
+}
+
+// --- 5. 主逻辑结构体 ---
+struct RayMarcher
+{
+    float3 LocalRo;
+    float3 LocalRd;
+    float3 SliceNormal; // 切割面法线
+    float SliceOffset;  // 切割面位置
+    float MaxDist;
+
+    float4 Run()
+    {
+        float dO = 0.0;
+        float3 p = float3(0,0,0);
+        float matID = 0.0;
+        bool hit = false;
+        
+        for(int i = 0; i < 80; i++)
+        {
+            p = LocalRo + LocalRd * dO;
+            
+            // 获取距离和材质
+            float2 res = GetDistAndMat(p, SliceNormal, SliceOffset);
+            float dS = res.x;
+            matID = res.y; // 记录当前步进主要受谁影响
+            
+            dO += dS;
+            
+            if(dS < 0.1) 
+            {
+                hit = true;
+                break;
+            }
+            if(dO > MaxDist) break;
+        }
+        
+        if(hit)
+        {
+            float3 col = float3(0,0,0);
+            
+            // --- 核心：根据材质ID上色 ---
+            if (matID > 0.5) // 如果是截面
+            {
+                // 1. 获取该点的温度
+                float temp = GetTemperature(p);
+                // 2. 映射为热力图颜色
+                float3 heatColor = GetHeatmapColor(temp);
+                
+                // 截面通常做成自发光(Emissive)或者稍微亮一点
+                col = heatColor; 
+            }
+            else // 如果是外壳
+            {
+                // 普通光照
+                float3 n = GetNormal(p, SliceNormal, SliceOffset);
+                float diff = clamp(dot(n, normalize(float3(1,1,1))), 0.0, 1.0);
+                col = float3(0.5, 0.5, 0.5) * diff;
+            }
+            
+            return float4(col, dO);
+        }
+        
+        return float4(0, 0, 0, -1.0);
+    }
+};

@@ -14,6 +14,7 @@ int NumColumns;
 int NumInstances;
 float Time;
 float4x4 ViewProjectionMatrix; // <--- 新增：视锥投影矩阵
+float4x4 ModelMatrix; // <--- 新增：视锥投影矩阵
 
 RWBuffer<float4> OutInstanceOriginBuffer;
 RWBuffer<float4> OutInstanceTransforms;
@@ -76,65 +77,65 @@ bool IsSphereVisible(float3 SphereCenter, float SphereRadius)
 [numthreads(THREAD_COUNT, 1, 1)]
 void MainCS(uint TaskIndex : SV_DispatchThreadID)
 {
-    // 越界检查
-    if (TaskIndex >= (uint)NumInstances) return;
+    if (TaskIndex == 0)
+    {
+        uint PlaceHolder = 0;
+        InterlockedExchange(OutIndirectArgs[1], 0, PlaceHolder);
+    }
 
-    // 1. 计算位置 (和原逻辑一致) [cite: 6]
+    GroupMemoryBarrierWithGroupSync();
+
+    if (TaskIndex >= (uint)NumInstances) return;
+    
     uint Row = TaskIndex / NumColumns;
     uint Col = TaskIndex % NumColumns;
     float3 Position = float3(Col * XSpace, Row * YSpace, 0.0f);
 
-    // 2. 计算高度 (和原逻辑一致) [cite: 7]
     float2 GridCenter = float2(NumColumns * 0.5f, NumInstances / NumColumns * 0.5f);
     float Dist = distance(float2(Col, Row), GridCenter);
     float Wave = sin(Dist * 0.1f - Time * 2.0f) * 0.5f + 0.5f;
-    float BarHeight = Wave * 500.0f + 20.0f; // [cite: 9]
-
-    // -----------------------------------------------------------------
-    // 3. 构建球形包围盒 (Bounding Sphere)
-    // -----------------------------------------------------------------
+    float BarHeight = Wave * 500.0f + 20.0f; 
     
-    // 几何体范围是 [Position, Position + (WIDTH, WIDTH, BarHeight)]
-    // 中心点 = Position + 半个尺寸
     float3 HalfSize = float3(WIDTH * 0.5f, WIDTH * 0.5f, BarHeight * 0.5f);
-    float3 SphereCenter = Position + HalfSize; // [cite: 23, 24]
+    float3 SphereCenter = Position + HalfSize;
 
-    float MaxBarHeight = 520.0f; 
-    float3 ConservativeHalfSize = float3(WIDTH * 0.5f, WIDTH * 0.5f, MaxBarHeight * 0.5f);
-    float ConservativeRadius = length(ConservativeHalfSize);
+    float ConservativeRadius = BarHeight * 0.6f;
+    
+    SphereCenter = mul(float4(SphereCenter, 1.0f), ModelMatrix).xyz;
 
-    // -----------------------------------------------------------------
-    // 4. 执行球体剔除
-    // -----------------------------------------------------------------
-    if (IsSphereVisible(SphereCenter, ConservativeRadius))
+    float scale_x = length(float3(ModelMatrix[0][0], ModelMatrix[0][1], ModelMatrix[0][2]));
+    float scale_y = length(float3(ModelMatrix[1][0], ModelMatrix[1][1], ModelMatrix[1][2]));
+    float scale_z = length(float3(ModelMatrix[2][0], ModelMatrix[2][1], ModelMatrix[2][2]));
+    float max_scale = max(max(scale_x, scale_y), scale_z);
+
+    float transformed_radius = ConservativeRadius * max_scale;
+    if (IsSphereVisible(SphereCenter, transformed_radius))
     {
-        // 5. 如果可见：原子增加计数器，获取写入位置
         uint WriteIndex;
-        // OutIndirectArgs[1] 对应 InstanceCount [cite: 17]
         InterlockedAdd(OutIndirectArgs[1], 1, WriteIndex);
 
-        // 6. 写入 Instance Data (逻辑和原来一样，只是索引变了)
         OutInstanceOriginBuffer[WriteIndex] = float4(Position, 1.0f); // 注意用 WriteIndex
 
         float ScaleX = WIDTH;
         float ScaleY = WIDTH;
         float ScaleZ = BarHeight;
 
-        float4 TransformRow0 = float4(ScaleX, 0.0f, 0.0f, 0.0f); // [cite: 11]
+        float4 TransformRow0 = float4(ScaleX, 0.0f, 0.0f, 0.0f); 
         float4 TransformRow1 = float4(0.0f, ScaleY, 0.0f, 0.0f);
         float4 TransformRow2 = float4(0.0f, 0.0f, ScaleZ, 0.0f);
 
-        uint WriteOffset = WriteIndex * 3; // [cite: 12]
+        uint WriteOffset = WriteIndex * 3; 
         OutInstanceTransforms[WriteOffset + 0] = TransformRow0;
         OutInstanceTransforms[WriteOffset + 1] = TransformRow1;
         OutInstanceTransforms[WriteOffset + 2] = TransformRow2;
     }
 
-    // 7. 只需要第0号线程去设置其他固定参数
+    AllMemoryBarrierWithGroupSync();
+
     if (TaskIndex == 0)
     {
-        OutIndirectArgs[0] = 36; // IndexCountPerInstance [cite: 15]
-        OutIndirectArgs[2] = 0;  // StartIndexLocation [cite: 17]
+        OutIndirectArgs[0] = 36; // IndexCountPerInstance
+        OutIndirectArgs[2] = 0;  // StartIndexLocation
         OutIndirectArgs[3] = 0;  // BaseVertexLocation
     }
 }

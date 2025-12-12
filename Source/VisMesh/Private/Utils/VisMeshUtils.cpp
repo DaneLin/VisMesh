@@ -118,8 +118,8 @@ void AddBoxChartInstancingPass(FRDGBuilder& GraphBuilder,FRHIUnorderedAccessView
 DECLARE_GPU_DRAWCALL_STAT(PopulateInstanceCulledPass);
 
 void AddBoxChartFrustumCulledInstancePass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* InstanceOriginBuffersUAV,
-	FRHIUnorderedAccessView* InstanceTransformsUAV, FRDGBufferUAVRef IndirectArgsBufferUAV, float InXSpace,
-	float InYSpace, int32 InNumColumns, int32 InNumInstances, float InTime, FMatrix44f InProjectionViewMatrix)
+	FRHIUnorderedAccessView* InstanceTransformsUAV, FRHIUnorderedAccessView* IndirectArgsBufferUAV, float InXSpace,
+	float InYSpace, int32 InNumColumns, int32 InNumInstances, float InTime, FMatrix44f InProjectionViewMatrix, FMatrix44f InWorldMatrix)
 {
 	RDG_GPU_STAT_SCOPE(GraphBuilder, PopulateInstanceCulledPass);
 	RDG_EVENT_SCOPE(GraphBuilder, "PopulateInstanceCulledPass");
@@ -136,6 +136,7 @@ void AddBoxChartFrustumCulledInstancePass(FRDGBuilder& GraphBuilder, FRHIUnorder
 	PassParameters->NumInstances = InNumInstances;
 	PassParameters->Time = InTime;
 	PassParameters->ViewProjectionMatrix = InProjectionViewMatrix;
+	PassParameters->ModelMatrix = InWorldMatrix;
 
 	int32 GroupCount = FMath::DivideAndRoundUp(InNumInstances, (int32)FPopulateBoxChartFrustumCulledInstanceBufferCS::ThreadGroupSize);
 
