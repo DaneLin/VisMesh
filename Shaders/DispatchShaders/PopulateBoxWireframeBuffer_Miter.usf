@@ -1,0 +1,194 @@
+/*=============================================================================
+    PopulateBoxWireframeBuffer_Miter.usf
+    使用斜接算法的柱体边线生成
+=============================================================================*/
+
+#include "/Engine/Private/Common.ush"
+#include "../CommonBase/PolylineMiterJoint.ush"
+
+// Shader Parameters
+float XSpace;
+float YSpace;
+int NumColumns;
+int NumInstances;
+float LineWidth;
+float4 CameraPos;
+float Time;
+float2 ViewportSize;
+float TanHalfFOV;
+
+RWBuffer<float> OutInstanceVertices;
+RWBuffer<uint> OutIndirectArgs;
+
+#define WIDTH 50.0f
+#define VERTS_PER_WIRE_BOX 72
+
+/**
+ * 屏幕空间等宽的斜接算法（带距离补偿）
+ */
+bool ComputeMiterWithScreenWidth(
+    float3 Prev,
+    float3 Current,
+    float3 Next,
+    float TargetPixelWidth,
+    float3 CameraPos,
+    float2 ViewportSize,
+    float TanHalfFOV,
+    out float3 OutLeft,
+    out float3 OutRight
+)
+{
+    // 1. 计算当前点的距离和宽度补偿
+    float DistToCam = length(Current - CameraPos);
+    float WorldUnitPerPixel = (2.0f * DistToCam * TanHalfFOV) / ViewportSize.y;
+    float WorldWidth = TargetPixelWidth * WorldUnitPerPixel;
+    
+    // 2. 计算线段方向
+    float3 DirPrev = normalize(Current - Prev);
+    float3 DirNext = normalize(Next - Current);
+    
+    // 3. 计算到相机的方向
+    float3 ToCamera = normalize(CameraPos - Current);
+    
+    // 4. 计算Billboard右向量
+    float3 RightPrev = normalize(cross(ToCamera, DirPrev));
+    float3 RightNext = normalize(cross(ToCamera, DirNext));
+    
+    // 5. 处理向量退化
+    if (length(cross(ToCamera, DirPrev)) < EPSILON)
+        RightPrev = float3(1, 0, 0);
+    if (length(cross(ToCamera, DirNext)) < EPSILON)
+        RightNext = float3(1, 0, 0);
+    
+    // 6. 计算斜接向量
+    float3 MiterDir = normalize(RightPrev + RightNext);
+    float MiterLen = length(RightPrev + RightNext);
+    
+    // 7. 退化处理
+    if (MiterLen < EPSILON)
+    {
+        OutLeft = -RightPrev * (WorldWidth * 0.5f);
+        OutRight = RightPrev * (WorldWidth * 0.5f);
+        return true;
+    }
+    
+    // 8. 计算斜接比例
+    float MiterScale = 1.0f / max(dot(MiterDir, RightPrev), EPSILON);
+    MiterScale = min(MiterScale, MITER_LIMIT);
+    
+    // 9. 输出偏移
+    OutLeft = -MiterDir * (WorldWidth * 0.5f * MiterScale);
+    OutRight = MiterDir * (WorldWidth * 0.5f * MiterScale);
+    
+    return true;
+}
+
+/**
+ * 为单条边绘制带斜接的线段
+ */
+void DrawEdgeWithMiter(
+    RWBuffer<float> OutBuffer,
+    uint BaseOffset,
+    inout int v,
+    float3 P0, float3 P1,
+    float3 Prev0, float3 Next1,
+    float PixelWidth,
+    float3 CamPos,
+    float2 ViewSize,
+    float TanFOV
+)
+{
+    // 计算起点的斜接
+    float3 Left0, Right0;
+    ComputeMiterWithScreenWidth(Prev0, P0, P1, PixelWidth, CamPos, ViewSize, TanFOV, Left0, Right0);
+    
+    // 计算终点的斜接
+    float3 Left1, Right1;
+    ComputeMiterWithScreenWidth(P0, P1, Next1, PixelWidth, CamPos, ViewSize, TanFOV, Left1, Right1);
+    
+    // 生成四边形
+    float3 V0 = P0 + Left0;
+    float3 V1 = P0 + Right0;
+    float3 V2 = P1 + Right1;
+    float3 V3 = P1 + Left1;
+    
+    // 三角形1: V0 -> V2 -> V1
+    WriteVertex(OutBuffer, BaseOffset, v++, V0);
+    WriteVertex(OutBuffer, BaseOffset, v++, V2);
+    WriteVertex(OutBuffer, BaseOffset, v++, V1);
+    
+    // 三角形2: V0 -> V3 -> V2
+    WriteVertex(OutBuffer, BaseOffset, v++, V0);
+    WriteVertex(OutBuffer, BaseOffset, v++, V3);
+    WriteVertex(OutBuffer, BaseOffset, v++, V2);
+}
+
+[numthreads(THREAD_COUNT, 1, 1)]
+void MainCS(uint TaskIndex : SV_DispatchThreadID)
+{
+    if (TaskIndex >= (uint)NumInstances)
+        return;
+
+    // 1. 计算位置
+    uint Row = TaskIndex / NumColumns;
+    uint Col = TaskIndex % NumColumns;
+    
+    // 2. 计算高度动画
+    float2 GridCenter = float2(NumColumns * 0.5f, NumInstances / NumColumns * 0.5f);
+    float Dist = distance(float2(Col, Row), GridCenter);
+    float Wave = sin(Dist * 0.1f - Time * 2.0f) * 0.5f + 0.5f;
+    float BarHeight = Wave * 500.0f + 20.0f;
+
+    // 3. 定义8个角点
+    float3 BasePos = float3(Col * XSpace, Row * YSpace, 0.0f);
+    float X0 = BasePos.x;
+    float X1 = BasePos.x + WIDTH;
+    float Y0 = BasePos.y;
+    float Y1 = BasePos.y + WIDTH;
+    float Z0 = 0.0f;
+    float Z1 = BarHeight;
+
+    float3 p[8];
+    p[0] = float3(X0, Y0, Z0); // Bottom-Left-Front
+    p[1] = float3(X1, Y0, Z0); // Bottom-Right-Front
+    p[2] = float3(X1, Y1, Z0); // Bottom-Right-Back
+    p[3] = float3(X0, Y1, Z0); // Bottom-Left-Back
+    p[4] = float3(X0, Y0, Z1); // Top-Left-Front
+    p[5] = float3(X1, Y0, Z1); // Top-Right-Front
+    p[6] = float3(X1, Y1, Z1); // Top-Right-Back
+    p[7] = float3(X0, Y1, Z1); // Top-Left-Back
+
+    uint StartOffset = TaskIndex * VERTS_PER_WIRE_BOX * 3;
+    int v = 0;
+
+    // 4. 定义12条边（每条边需要知道前驱和后继）
+    // 底部环路（闭合）
+    DrawEdgeWithMiter(OutInstanceVertices, StartOffset, v, p[0], p[1], p[3], p[2], LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    DrawEdgeWithMiter(OutInstanceVertices, StartOffset, v, p[1], p[2], p[0], p[3], LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    DrawEdgeWithMiter(OutInstanceVertices, StartOffset, v, p[2], p[3], p[1], p[0], LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    DrawEdgeWithMiter(OutInstanceVertices, StartOffset, v, p[3], p[0], p[2], p[1], LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    
+    // 顶部环路（闭合）
+    DrawEdgeWithMiter(OutInstanceVertices, StartOffset, v, p[4], p[5], p[7], p[6], LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    DrawEdgeWithMiter(OutInstanceVertices, StartOffset, v, p[5], p[6], p[4], p[7], LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    DrawEdgeWithMiter(OutInstanceVertices, StartOffset, v, p[6], p[7], p[5], p[4], LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    DrawEdgeWithMiter(OutInstanceVertices, StartOffset, v, p[7], p[4], p[6], p[5], LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    
+    // 垂直边（使用延伸方向作为前驱/后继）
+    float3 DownDir = float3(0, 0, -WIDTH);
+    float3 UpDir = float3(0, 0, WIDTH);
+    
+    DrawEdgeWithMiter(OutInstanceVertices, StartOffset, v, p[0], p[4], p[0] + DownDir, p[4] + UpDir, LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    DrawEdgeWithMiter(OutInstanceVertices, StartOffset, v, p[1], p[5], p[1] + DownDir, p[5] + UpDir, LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    DrawEdgeWithMiter(OutInstanceVertices, StartOffset, v, p[2], p[6], p[2] + DownDir, p[6] + UpDir, LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    DrawEdgeWithMiter(OutInstanceVertices, StartOffset, v, p[3], p[7], p[3] + DownDir, p[7] + UpDir, LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+
+    // 5. 写入 Indirect Arguments
+    if (TaskIndex == 0)
+    {
+        OutIndirectArgs[0] = NumInstances * VERTS_PER_WIRE_BOX;
+        OutIndirectArgs[1] = 1;
+        OutIndirectArgs[2] = 0;
+        OutIndirectArgs[3] = 0;
+    }
+}

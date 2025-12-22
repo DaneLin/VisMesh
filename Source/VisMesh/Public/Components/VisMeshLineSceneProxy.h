@@ -13,6 +13,8 @@ public:
 	int32 NumColumns, NumInstances;
 	float LineWidth;
 
+	bool bEnableMiter;
+
 	UMaterialInterface* Material;
 
 public:

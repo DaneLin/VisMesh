@@ -27,6 +27,9 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "GenerationArgs")
 	UMaterialInterface* Material;
+
+	UPROPERTY(EditAnywhere, Category = "GenerationArgs")
+	bool bEnableMiter = false;
 	
 	virtual FPrimitiveSceneProxy* CreateSceneProxy() override;
 	virtual FBoxSphereBounds CalcBounds(const FTransform& BoundTransform) const override;

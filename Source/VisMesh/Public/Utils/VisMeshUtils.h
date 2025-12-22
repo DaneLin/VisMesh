@@ -33,4 +33,8 @@ static void AddBoxChartFrustumCulledInstancePass(FRDGBuilder& GraphBuilder, FRHI
 
 static void AddBoxWireframePass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* PositionsUAV,
 								FRHIUnorderedAccessView* IndirectArgsBufferUAV, float InXSpace, float InYSpace,
-								int32 InNumColumns, int32 InNumInstances, float InLineWidth, float InTime, FVector4f InCameraPosition);
+								int32 InNumColumns, int32 InNumInstances, float InLineWidth, float InTime, FVector4f InCameraPosition,FVector2f ViewportSize,float TanHalfFOV);
+
+static void AddBoxWireframePass_Miter(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* PositionsUAV,
+								FRHIUnorderedAccessView* IndirectArgsBufferUAV, float InXSpace, float InYSpace,
+								int32 InNumColumns, int32 InNumInstances, float InLineWidth, float InTime, FVector4f InCameraPosition,FVector2f ViewportSize,float TanHalfFOV);

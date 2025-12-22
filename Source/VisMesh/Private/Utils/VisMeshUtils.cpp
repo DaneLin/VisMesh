@@ -154,7 +154,7 @@ DECLARE_GPU_DRAWCALL_STAT(PopulateWireFramePass);
 
 void AddBoxWireframePass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* PositionsUAV,
 	FRHIUnorderedAccessView* IndirectArgsBufferUAV, float InXSpace, float InYSpace, int32 InNumColumns,
-	int32 InNumInstances, float InLineWidth, float InTime, FVector4f InCameraPosition)
+	int32 InNumInstances, float InLineWidth, float InTime, FVector4f InCameraPosition,FVector2f ViewportSize,float TanHalfFOV)
 {
 	RDG_GPU_STAT_SCOPE(GraphBuilder, PopulateWireFramePass); // for unreal insights
 	RDG_EVENT_SCOPE(GraphBuilder, "PopulateWireFramePass"); // for render doc
@@ -171,9 +171,46 @@ void AddBoxWireframePass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* Pos
 	PassParameters->LineWidth = InLineWidth;
 	PassParameters->Time = InTime;
 	PassParameters->CameraPos = InCameraPosition;
+	PassParameters->ViewportSize = ViewportSize;
+	PassParameters->TanHalfFOV = TanHalfFOV;
 
 	// 计算 GroupCount
 	int32 GroupCount = FMath::DivideAndRoundUp(InNumInstances,(int32)FPopulateBoxWireframeBufferCS::ThreadGroupSize);
+
+	FComputeShaderUtils::AddPass(
+		GraphBuilder,
+		RDG_EVENT_NAME("PopulateWireFramePass"),
+		ERDGPassFlags::Compute | ERDGPassFlags::NeverCull,
+		ComputeShader,
+		PassParameters,
+		FIntVector(GroupCount, 1, 1));
+}
+
+void AddBoxWireframePass_Miter(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* PositionsUAV,
+	FRHIUnorderedAccessView* IndirectArgsBufferUAV, float InXSpace, float InYSpace, int32 InNumColumns,
+	int32 InNumInstances, float InLineWidth, float InTime, FVector4f InCameraPosition, FVector2f ViewportSize,
+	float TanHalfFOV)
+{
+	RDG_GPU_STAT_SCOPE(GraphBuilder, PopulateWireFramePass); // for unreal insights
+	RDG_EVENT_SCOPE(GraphBuilder, "PopulateWireFramePass"); // for render doc
+
+	TShaderMapRef<FPopulateBoxWireframeMiterBufferCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
+
+	FPopulateBoxWireframeMiterBufferCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FPopulateBoxWireframeMiterBufferCS::FParameters>();
+	PassParameters->OutInstanceVertices = PositionsUAV;
+	PassParameters->OutIndirectArgs = IndirectArgsBufferUAV;
+	PassParameters->XSpace = InXSpace;
+	PassParameters->YSpace = InYSpace;
+	PassParameters->NumColumns = InNumColumns;
+	PassParameters->NumInstances = InNumInstances;
+	PassParameters->LineWidth = InLineWidth;
+	PassParameters->Time = InTime;
+	PassParameters->CameraPos = InCameraPosition;
+	PassParameters->ViewportSize = ViewportSize;
+	PassParameters->TanHalfFOV = TanHalfFOV;
+
+	// 计算 GroupCount
+	int32 GroupCount = FMath::DivideAndRoundUp(InNumInstances,(int32)FPopulateBoxWireframeMiterBufferCS::ThreadGroupSize);
 
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,

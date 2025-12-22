@@ -14,8 +14,10 @@ float YSpace;       // Y轴 间距
 int NumColumns;     // 每行有多少列
 int NumInstances;   // 总生成的柱子数量
 float LineWidth;
-float4 CameraPos;
 float Time;         // 时间 (用于高度动画)
+float2 ViewportSize;  // 新增：屏幕分辨率 (宽, 高)
+float TanHalfFOV;     // 新增：tan(FOV/2)
+float4 CameraPos;
 
 // 输出：改为顶点缓冲区 (存储扁平化的 float: x,y,z, x,y,z...)
 RWBuffer<float> OutInstanceVertices; 
@@ -71,24 +73,42 @@ void MainCS(uint TaskIndex : SV_DispatchThreadID)
     // 每个 Instance 占用 VERTS_PER_WIRE_BOX 个顶点，每个顶点 3 个 float
     uint StartOffset = TaskIndex * VERTS_PER_WIRE_BOX * 3;
     int v = 0; // 局部顶点计数器
+    // // 底部矩形 (Bottom Loop)
+    // AppendLineSegment(OutInstanceVertices, StartOffset, v, p0, p1, LineWidth, CameraPos.xyz);
+    // AppendLineSegment(OutInstanceVertices, StartOffset, v, p1, p2, LineWidth, CameraPos.xyz);
+    // AppendLineSegment(OutInstanceVertices, StartOffset, v, p2, p3, LineWidth, CameraPos.xyz);
+    // AppendLineSegment(OutInstanceVertices, StartOffset, v, p3, p0, LineWidth, CameraPos.xyz);
+    //
+    // // 顶部矩形 (Top Loop)
+    // AppendLineSegment(OutInstanceVertices, StartOffset, v, p4, p5, LineWidth, CameraPos.xyz);
+    // AppendLineSegment(OutInstanceVertices, StartOffset, v, p5, p6, LineWidth, CameraPos.xyz);
+    // AppendLineSegment(OutInstanceVertices, StartOffset, v, p6, p7, LineWidth, CameraPos.xyz);
+    // AppendLineSegment(OutInstanceVertices, StartOffset, v, p7, p4, LineWidth, CameraPos.xyz);
+    //
+    // // 垂直棱 (Vertical Pillars)
+    // AppendLineSegment(OutInstanceVertices, StartOffset, v, p0, p4, LineWidth, CameraPos.xyz);
+    // AppendLineSegment(OutInstanceVertices, StartOffset, v, p1, p5, LineWidth, CameraPos.xyz);
+    // AppendLineSegment(OutInstanceVertices, StartOffset, v, p2, p6, LineWidth, CameraPos.xyz);
+    // AppendLineSegment(OutInstanceVertices, StartOffset, v, p3, p7, LineWidth, CameraPos.xyz);
+
     // 底部矩形 (Bottom Loop)
-    AppendLineSegment(OutInstanceVertices, StartOffset, v, p0, p1, LineWidth, CameraPos.xyz);
-    AppendLineSegment(OutInstanceVertices, StartOffset, v, p1, p2, LineWidth, CameraPos.xyz);
-    AppendLineSegment(OutInstanceVertices, StartOffset, v, p2, p3, LineWidth, CameraPos.xyz);
-    AppendLineSegment(OutInstanceVertices, StartOffset, v, p3, p0, LineWidth, CameraPos.xyz);
-
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p0, p1, LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p1, p2, LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p2, p3, LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p3, p0, LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    
     // 顶部矩形 (Top Loop)
-    AppendLineSegment(OutInstanceVertices, StartOffset, v, p4, p5, LineWidth, CameraPos.xyz);
-    AppendLineSegment(OutInstanceVertices, StartOffset, v, p5, p6, LineWidth, CameraPos.xyz);
-    AppendLineSegment(OutInstanceVertices, StartOffset, v, p6, p7, LineWidth, CameraPos.xyz);
-    AppendLineSegment(OutInstanceVertices, StartOffset, v, p7, p4, LineWidth, CameraPos.xyz);
-
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p4, p5, LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p5, p6, LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p6, p7, LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p7, p4, LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    
     // 垂直棱 (Vertical Pillars)
-    AppendLineSegment(OutInstanceVertices, StartOffset, v, p0, p4, LineWidth, CameraPos.xyz);
-    AppendLineSegment(OutInstanceVertices, StartOffset, v, p1, p5, LineWidth, CameraPos.xyz);
-    AppendLineSegment(OutInstanceVertices, StartOffset, v, p2, p6, LineWidth, CameraPos.xyz);
-    AppendLineSegment(OutInstanceVertices, StartOffset, v, p3, p7, LineWidth, CameraPos.xyz);
-
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p0, p4, LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p1, p5, LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p2, p6, LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    AppendLineSegment(OutInstanceVertices, StartOffset, v, p3, p7, LineWidth, CameraPos.xyz, ViewportSize, TanHalfFOV);
+    
     // 5. 写入 Indirect Arguments (仅需由第0个线程写入一次)
     if (TaskIndex == 0)
     {

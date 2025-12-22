@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GlobalShader.h"
+#include "HLSLTypeAliases.h"
 #include "ShaderPermutation.h"
 #include "ShaderParameterStruct.h"
 #include "ShaderParameterUtils.h"
@@ -93,8 +94,36 @@ public:
 		SHADER_PARAMETER(int, NumColumns)
 		SHADER_PARAMETER(int, NumInstances)
 		SHADER_PARAMETER(float, LineWidth)
-		SHADER_PARAMETER(FVector4f, CameraPos)
 		SHADER_PARAMETER(float, Time)
+		SHADER_PARAMETER(FVector2f, ViewportSize)
+		SHADER_PARAMETER(float, TanHalfFOV)
+		SHADER_PARAMETER(FVector4f, CameraPos)
+	END_SHADER_PARAMETER_STRUCT()
+
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment);
+};
+
+class FPopulateBoxWireframeMiterBufferCS : public FGlobalShader
+{
+	SHADER_USE_PARAMETER_STRUCT(FPopulateBoxWireframeMiterBufferCS, FGlobalShader);
+	DECLARE_EXPORTED_GLOBAL_SHADER(FPopulateBoxWireframeMiterBufferCS, VISMESH_API);
+
+public:
+	static constexpr uint32 ThreadGroupSize = 256;
+	
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, VISMESH_API)
+		SHADER_PARAMETER_UAV(RWBuffer<float>, OutInstanceVertices)
+		SHADER_PARAMETER_UAV(RWBuffer<uint>, OutIndirectArgs)
+
+		SHADER_PARAMETER(float, XSpace)
+		SHADER_PARAMETER(float, YSpace)
+		SHADER_PARAMETER(int, NumColumns)
+		SHADER_PARAMETER(int, NumInstances)
+		SHADER_PARAMETER(float, LineWidth)
+		SHADER_PARAMETER(float, Time)
+		SHADER_PARAMETER(FVector2f, ViewportSize)
+		SHADER_PARAMETER(float, TanHalfFOV)
+		SHADER_PARAMETER(FVector4f, CameraPos)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment);

@@ -9,32 +9,20 @@ void WriteVertex(RWBuffer<float> OutInstanceVertices, uint StartOffset, uint VId
 }
 
 /**
- * 生成面朝相机的带宽度线段 (Billboard Line)
- * * @param OutBuffer      输出顶点缓冲区
- * @param StartOffset    当前Instance在缓冲区中的起始偏移
- * @param v              [inout] 当前顶点的计数器引用 (会自动累加)
- * @param StartPos       线段起点 (World Space)
- * @param EndPos         线段终点 (World Space)
- * @param Width          线宽
- * @param CameraPos      相机位置 (用于确保面片始终朝向观察者)
+ * 生成面朝相机的带宽度线段 (Billboard Line) - 世界空间固定宽度版本
  */
 void AppendLineSegment(RWBuffer<float> OutBuffer, uint StartOffset, inout int v, float3 StartPos, float3 EndPos, float Width, float3 CameraPos)
 {
 	float3 LineDir = EndPos - StartPos;
 	float Len = length(LineDir);
     
-	// 防止生成长度为0的线段导致计算错误
 	if (Len < 0.0001f) return;
     
-	LineDir /= Len; // Normalize
+	LineDir /= Len;
 
-	// 1. 计算从线段指向相机的向量
 	float3 ToCamera = normalize(CameraPos - (StartPos + EndPos) * 0.5f);
-
-	// 2. 计算“右向量”：垂直于线段方向 且 垂直于观察方向
-	float3 Right = cross(ToCamera,LineDir);
+	float3 Right = cross(ToCamera, LineDir);
     
-	// 如果线段正好指向相机（平行），使用默认上向量防止消失
 	if (length(Right) < 0.0001f)
 	{
 		Right = float3(0, 0, 1); 
@@ -44,24 +32,102 @@ void AppendLineSegment(RWBuffer<float> OutBuffer, uint StartOffset, inout int v,
 		Right = normalize(Right);
 	}
 
-	// 3. 计算偏移量 (线宽的一半)
 	float3 OffsetVec = Right * (Width * 0.5f);
 
-	// 4. 计算四个角点
-	// p0: 起点左侧, p1: 起点右侧, p2: 终点右侧, p3: 终点左侧
 	float3 p0 = StartPos - OffsetVec;
 	float3 p1 = StartPos + OffsetVec;
 	float3 p2 = EndPos + OffsetVec;
 	float3 p3 = EndPos - OffsetVec;
 
-	// 5. 写入两个三角形 (逆时针 CCW)
-	// Triangle 1: p0 -> p1 -> p2
 	WriteVertex(OutBuffer, StartOffset, v++, p0);
 	WriteVertex(OutBuffer, StartOffset, v++, p1);
 	WriteVertex(OutBuffer, StartOffset, v++, p2);
 
-	// Triangle 2: p0 -> p2 -> p3
 	WriteVertex(OutBuffer, StartOffset, v++, p0);
 	WriteVertex(OutBuffer, StartOffset, v++, p2);
 	WriteVertex(OutBuffer, StartOffset, v++, p3);
+}
+
+/**
+ * 生成面朝相机的带宽度线段 (Billboard Line) - 屏幕空间等宽版本
+ * @param OutBuffer          输出顶点缓冲区
+ * @param StartOffset        当前Instance在缓冲区中的起始偏移
+ * @param v                  [inout] 当前顶点计数器 (会自动累加)
+ * @param P0                 线段起点 (Local/World Space)
+ * @param P1                 线段终点 (Local/World Space)
+ * @param TargetWidthPixels  目标像素宽度
+ * @param CameraPosWS        相机位置 (相同空间)
+ * @param ViewportSize       屏幕分辨率 (宽, 高)
+ * @param TanHalfFOV         tan(FOV/2)
+ */
+void AppendLineSegment(
+	RWBuffer<float> OutBuffer, 
+	uint StartOffset, 
+	inout int v, 
+	float3 P0, 
+	float3 P1, 
+	float TargetWidthPixels,
+	float3 CameraPosWS,
+	float2 ViewportSize,
+	float TanHalfFOV
+)
+{
+	// 1. 计算线段方向和长度
+	float3 LineDir = P1 - P0;
+	float LineLength = length(LineDir);
+	
+	if (LineLength < 0.0001f) 
+		return;
+	
+	LineDir = normalize(LineDir);
+
+	// 2. 计算线段中点到相机的方向
+	float3 MidPoint = (P0 + P1) * 0.5f;
+	float3 ToCamera = CameraPosWS - MidPoint;
+	float DistToCamera = length(ToCamera);
+	ToCamera = normalize(ToCamera);
+
+	// 3. 计算 Billboard 的 "右向量" (垂直于线段和视线)
+	float3 Right = normalize(cross(ToCamera, LineDir));
+	
+	// 如果线段几乎平行于视线，使用备用向量
+	if (length(cross(LineDir, ToCamera)) < 0.0001f)
+	{
+		// 使用世界上方向作为备用
+		Right = normalize(cross(LineDir, float3(0, 0, 1)));
+		if (length(Right) < 0.0001f)
+		{
+			Right = float3(1, 0, 0);
+		}
+	}
+
+	// 4. 计算两个端点的距离（用于计算各自的宽度）
+	float Dist0 = length(P0 - CameraPosWS);
+	float Dist1 = length(P1 - CameraPosWS);
+
+	// 5. 计算每个端点处的世界空间宽度
+	// 公式: WorldUnitPerPixel = (2 * Distance * tan(FOV/2)) / ViewportHeight
+	float WorldUnitPerPixel0 = (2.0f * Dist0 * TanHalfFOV) / ViewportSize.y;
+	float WorldUnitPerPixel1 = (2.0f * Dist1 * TanHalfFOV) / ViewportSize.y;
+
+	// 实际宽度 = 目标像素宽度 * 单位像素对应的世界单位
+	float Width0 = TargetWidthPixels * WorldUnitPerPixel0;
+	float Width1 = TargetWidthPixels * WorldUnitPerPixel1;
+
+	// 6. 计算四个角点
+	float3 V0 = P0 - Right * (Width0 * 0.5f);  // 起点左侧
+	float3 V1 = P0 + Right * (Width0 * 0.5f);  // 起点右侧
+	float3 V2 = P1 + Right * (Width1 * 0.5f);  // 终点右侧
+	float3 V3 = P1 - Right * (Width1 * 0.5f);  // 终点左侧
+
+	// 7. 生成两个三角形 (确保正确的 CCW 绕序)
+	// Triangle 1: V0 -> V1 -> V2
+	WriteVertex(OutBuffer, StartOffset, v++, V0);
+	WriteVertex(OutBuffer, StartOffset, v++, V1);
+	WriteVertex(OutBuffer, StartOffset, v++, V2);
+
+	// Triangle 2: V0 -> V2 -> V3
+	WriteVertex(OutBuffer, StartOffset, v++, V0);
+	WriteVertex(OutBuffer, StartOffset, v++, V2);
+	WriteVertex(OutBuffer, StartOffset, v++, V3);
 }

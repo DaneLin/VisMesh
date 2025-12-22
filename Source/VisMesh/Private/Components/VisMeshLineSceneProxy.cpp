@@ -12,6 +12,7 @@ FVisMeshLineSceneProxy::FVisMeshLineSceneProxy(UVisMeshLineComponent* Owner)
 	, IndirectArgsBuffer{ nullptr }
 	, IndirectArgsBufferUAV{}
 	, Material(Owner->Material)
+	, bEnableMiter(Owner->bEnableMiter)
 {
 	bVFRequiresPrimitiveUniformBuffer = true;
 	
@@ -177,6 +178,9 @@ void FVisMeshLineSceneProxy::DispatchComputePass_RenderThread(FRDGBuilder& Graph
 	{
 		const float CurrentTime = ViewFamily.Time.GetRealTimeSeconds();
 		FVector WorldCameraPos = FVector::Zero();
+		FVector2f ViewportSize = FVector2f(1920.0f, 1080.0f); // 默认值
+		float TanHalfFOV = 0.57735f; // 默认 60度 FOV
+		
 		if (ViewFamily.Views.Num() > 0)
 		{
 			// 获取第一个视图 (通常是主要玩家视图或编辑器视口)
@@ -184,6 +188,18 @@ void FVisMeshLineSceneProxy::DispatchComputePass_RenderThread(FRDGBuilder& Graph
            
 			// 获取视图的世界原点
 			WorldCameraPos = MainView->ViewMatrices.GetViewOrigin();
+
+			ViewportSize = FVector2f(
+				MainView->UnscaledViewRect.Width(), 
+				MainView->UnscaledViewRect.Height()
+			);
+
+			const FMatrix& ProjectionMatrix = MainView->ViewMatrices.GetProjectionMatrix();
+			float AspectRatio = ViewportSize.X / ViewportSize.Y;
+			if (ProjectionMatrix.M[3][3] < 1.0f) // 透视投影
+			{
+				TanHalfFOV = 1.0f / ProjectionMatrix.M[1][1];
+			}
 		}
 		
 		// 将相机从 世界空间 转换到 局部空间
@@ -192,8 +208,10 @@ void FVisMeshLineSceneProxy::DispatchComputePass_RenderThread(FRDGBuilder& Graph
 
 		// 4. 转为 float3 传给 Shader
 		FVector3f CameraPosFloat = (FVector3f)LocalCameraPos; // 使用转换后的 Local 位置
-            
-		// 调用具体的 Pass 添加函数 (这个函数可以是静态的，或者 VisMeshUtils 里的)
-		AddBoxWireframePass(GraphBuilder,PositionBuffer->GetUAV(),IndirectArgsBufferUAV,XSpace, YSpace, NumColumns, NumInstances, LineWidth,CurrentTime, CameraPosFloat);
+
+		if (!bEnableMiter)
+			AddBoxWireframePass(GraphBuilder,PositionBuffer->GetUAV(),IndirectArgsBufferUAV,XSpace, YSpace, NumColumns, NumInstances, LineWidth,0, CameraPosFloat,ViewportSize, TanHalfFOV);
+		else
+			AddBoxWireframePass_Miter(GraphBuilder,PositionBuffer->GetUAV(),IndirectArgsBufferUAV,XSpace, YSpace, NumColumns, NumInstances, LineWidth,0, CameraPosFloat,ViewportSize, TanHalfFOV);
 	}
 }
