@@ -240,7 +240,7 @@ DECLARE_GPU_DRAWCALL_STAT(GenerateScatterPlotSpherePass);
 
 void AddGenerateScatterPlotSpherePass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* PositionsUAV,
 	FRHIUnorderedAccessView* IndirectArgsBufferUAV, FVector3f BoundsMin, FVector3f BoundsMax, float Radius,
-	int32 NumPoints, float Seed)
+	int32 NumPoints, float Time, float PulseAmplitude, float PulseSpeed)
 {
 	RDG_GPU_STAT_SCOPE(GraphBuilder, GenerateScatterPlotSpherePass); // for unreal insights
 	RDG_EVENT_SCOPE(GraphBuilder, "GenerateScatterPlotSpherePass"); // for render doc
@@ -254,8 +254,9 @@ void AddGenerateScatterPlotSpherePass(FRDGBuilder& GraphBuilder, FRHIUnorderedAc
 	PassParameters->BoundsMin = BoundsMax;
 	PassParameters->Radius = Radius;
 	PassParameters->NumPoints = NumPoints;
-	PassParameters->Seed = Seed;
-
+	PassParameters->Time = Time;
+	PassParameters->PulseAmplitude = PulseAmplitude;
+	PassParameters->PulseSpeed = PulseSpeed;
 	// 计算 GroupCount
 	int32 GroupCount = FMath::DivideAndRoundUp(NumPoints,(int32)FPopulateBoxWireframeMiterBufferCS::ThreadGroupSize);
 

@@ -1,0 +1,105 @@
+/*=============================================================================
+    GenerateBoxChartInstanceBuffer.usf
+    
+    职责: 仅负责生成所有实例的数据 (位置、变换、包围球)
+    特点: 
+      - 只在数据变化时执行 (参数改变、首次加载等)
+      - 输出到 SourceBuffer，供后续 Culling Pass 使用
+      - 不做任何视锥剔除
+=============================================================================*/
+
+#include "/Engine/Private/Common.ush"
+
+// -----------------------------------------------------------------------------
+// Parameters
+// -----------------------------------------------------------------------------
+float XSpace;
+float YSpace;
+int NumColumns;
+int NumInstances;
+float Time;
+
+// -----------------------------------------------------------------------------
+// Output Buffers (Source Instance Data - 存储所有实例)
+// -----------------------------------------------------------------------------
+// 实例原点位置: float4(Position.xyz, 1.0)
+RWBuffer<float4> OutSourceOrigins;
+
+// 实例变换矩阵: 每个实例 3 个 float4 (3x4 矩阵的 3 行)
+// Layout: [Instance0.Row0, Instance0.Row1, Instance0.Row2, Instance1.Row0, ...]
+RWBuffer<float4> OutSourceTransforms;
+
+// 实例包围球: float4(Center.xyz, Radius)
+// 用于后续 Culling Pass 快速剔除
+RWBuffer<float4> OutSourceBounds;
+
+// -----------------------------------------------------------------------------
+// Constants
+// -----------------------------------------------------------------------------
+#define WIDTH 50.0f
+
+// -----------------------------------------------------------------------------
+// Main Compute Shader
+// -----------------------------------------------------------------------------
+[numthreads(THREAD_COUNT, 1, 1)]
+void MainCS(uint TaskIndex : SV_DispatchThreadID)
+{
+    if (TaskIndex >= (uint)NumInstances) 
+        return;
+
+    // =========================================================================
+    // 1. 计算网格位置
+    // =========================================================================
+    uint Row = TaskIndex / NumColumns;
+    uint Col = TaskIndex % NumColumns;
+    float3 Position = float3(Col * XSpace, Row * YSpace, 0.0f);
+
+    // =========================================================================
+    // 2. 计算动画高度 (基于波形)
+    // =========================================================================
+    float2 GridCenter = float2(NumColumns * 0.5f, NumInstances / NumColumns * 0.5f);
+    float Dist = distance(float2(Col, Row), GridCenter);
+    float Wave = sin(Dist * 0.1f - Time * 2.0f) * 0.5f + 0.5f;
+    float BarHeight = Wave * 500.0f + 20.0f;
+
+    // =========================================================================
+    // 3. 计算缩放 (变换矩阵)
+    // =========================================================================
+    float ScaleX = WIDTH;
+    float ScaleY = WIDTH;
+    float ScaleZ = BarHeight;
+
+    // 3x4 变换矩阵 (只有缩放，无旋转)
+    // | ScaleX  0       0       0 |
+    // | 0       ScaleY  0       0 |
+    // | 0       0       ScaleZ  0 |
+    float4 TransformRow0 = float4(ScaleX, 0.0f, 0.0f, 0.0f);
+    float4 TransformRow1 = float4(0.0f, ScaleY, 0.0f, 0.0f);
+    float4 TransformRow2 = float4(0.0f, 0.0f, ScaleZ, 0.0f);
+
+    // =========================================================================
+    // 4. 计算包围球 (用于 Culling)
+    // =========================================================================
+    // 包围球中心 = 实例原点 + 半尺寸偏移
+    float3 HalfSize = float3(WIDTH * 0.5f, WIDTH * 0.5f, BarHeight * 0.5f);
+    float3 BoundCenter = Position + HalfSize;
+    
+    // 保守半径: 使用最大维度的一半 * 安全系数
+    // 对于柱状物体，高度通常是最大维度
+    float ConservativeRadius = BarHeight * 0.6f;
+
+    // =========================================================================
+    // 5. 写入输出 Buffer
+    // =========================================================================
+    // 写入原点
+    OutSourceOrigins[TaskIndex] = float4(Position, 1.0f);
+
+    // 写入变换矩阵 (3 个 float4)
+    uint TransformOffset = TaskIndex * 3;
+    OutSourceTransforms[TransformOffset + 0] = TransformRow0;
+    OutSourceTransforms[TransformOffset + 1] = TransformRow1;
+    OutSourceTransforms[TransformOffset + 2] = TransformRow2;
+
+    // 写入包围球
+    OutSourceBounds[TaskIndex] = float4(BoundCenter, ConservativeRadius);
+}

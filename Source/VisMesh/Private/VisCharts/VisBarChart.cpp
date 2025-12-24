@@ -38,7 +38,7 @@ void AVisBarChart::BeginPlay()
 
 	// 测试数据
 	// --- 1. 生成 100,000 个随机测试数据 ---
-	const int32 NumData = 10000;
+	const int32 NumData = NumInstances;
 	TArray<float> TestData;
 	TestData.SetNumUninitialized(NumData);
 
@@ -307,7 +307,7 @@ void AVisBarChart::HandleClick()
             float RawHeight = CachedDataValues[SelectedIndex] * HeightMultiplier;
             float FinalHeight = RawHeight; // 选中通常保持原高，或者也稍微放大
 
-        	SelectionMeshComponent->SetRelativeLocation(FVector(XPos, YPos, 0.0f));
+        	SelectionMeshComponent->SetWorldLocation(GetActorLocation() + FVector(XPos, YPos, 0.0f));
             
         	// 重置缩放为 1 (所有的尺寸在网格生成时计算)
         	SelectionMeshComponent->SetRelativeScale3D(FVector(1.0f));

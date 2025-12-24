@@ -145,7 +145,9 @@ public:
 		SHADER_PARAMETER(float, Radius)
 		SHADER_PARAMETER(FVector3f, BoundsMax)
 		SHADER_PARAMETER(int, NumPoints)
-		SHADER_PARAMETER(float, Seed)
+		SHADER_PARAMETER(float, Time)
+		SHADER_PARAMETER(float, PulseAmplitude)
+		SHADER_PARAMETER(float,PulseSpeed )
 	END_SHADER_PARAMETER_STRUCT()
 
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment);

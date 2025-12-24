@@ -1,5 +1,159 @@
+// /*=============================================================================
+// 						GenerateScatterPlotSpheres.usf
+// =============================================================================*/
+//
+// #include "/Engine/Private/Common.ush"
+// #include "../CommonBase/VisMeshDrawCommon.ush" 
+//
+// // -----------------------------------------------------------------------------
+// // Shader Parameters
+// // -----------------------------------------------------------------------------
+// float3 BoundsMin;   // 散点分布范围 Min
+// float3 BoundsMax;   // 散点分布范围 Max
+// float Radius;       // 球体半径
+// uint NumPoints;     // 生成的总球体数量
+// float Seed;         // 随机种子
+//
+// // 输出
+// RWBuffer<float> OutInstanceVertices;
+// RWBuffer<uint> OutIndirectArgs;
+//
+// [numthreads(THREAD_COUNT, 1, 1)]
+// void MainCS(uint TaskIndex : SV_DispatchThreadID)
+// {
+// 	// 越界检查
+// 	if (TaskIndex >= NumPoints)
+// 	{
+// 		return;
+// 	}
+//
+// 	// 1. 计算位置 (使用 Common 中的随机函数)
+// 	float3 Random01 = Random3(TaskIndex, Seed);
+// 	float3 CenterPos = lerp(BoundsMin, BoundsMax, Random01);
+//
+// 	// 2. 生成球体
+// 	// 使用 Common 中定义的宏计算偏移
+// 	uint StartOffset = TaskIndex * VERTS_PER_SPHERE_INSTANCE * 3;
+// 	int v = 0; // 局部顶点计数器
+//
+// 	// 调用 Common 中的函数生成几何体
+// 	AppendSphere(OutInstanceVertices, StartOffset, v, CenterPos, Radius);
+//
+// 	// 3. 写入 Indirect Arguments (仅第一个线程执行)
+// 	if (TaskIndex == 0)
+// 	{
+// 		// 使用 Common 中定义的 VERTS_PER_SPHERE_INSTANCE 确保数量一致
+// 		OutIndirectArgs[0] = NumPoints * VERTS_PER_SPHERE_INSTANCE; 
+// 		OutIndirectArgs[1] = 1; 
+// 		OutIndirectArgs[2] = 0;
+// 		OutIndirectArgs[3] = 0;
+// 	}
+// }
+
 /*=============================================================================
-						GenerateScatterPlotSpheres.usf
+                    GenerateScatterPlotSpheres_Stable.usf
+    
+    简化版：解决频繁更新闪烁问题
+    核心思路：使用稳定的随机函数，位置只依赖点ID，不依赖外部Seed
+=============================================================================*/
+//
+// #include "/Engine/Private/Common.ush"
+// #include "../CommonBase/VisMeshDrawCommon.ush" 
+//
+// // -----------------------------------------------------------------------------
+// // Shader Parameters
+// // -----------------------------------------------------------------------------
+// float3 BoundsMin;
+// float3 BoundsMax;
+// float Radius;
+// uint NumPoints;
+//
+// // 动画参数（可选）
+// float Time;              // 当前时间，用于脉动效果
+// float PulseAmplitude;    // 脉动幅度 (0 = 禁用, 建议 0.05~0.15)
+// float PulseSpeed;        // 脉动速度 (建议 1.0~3.0)
+//
+// // 输出
+// RWBuffer<float> OutInstanceVertices;
+// RWBuffer<uint> OutIndirectArgs;
+//
+// // -----------------------------------------------------------------------------
+// // 稳定随机函数 - 只依赖ID，不依赖外部参数
+// // -----------------------------------------------------------------------------
+// float3 StableRandom3(uint ID)
+// {
+//     // 使用固定的哈希，确保同一ID永远返回相同值
+//     uint h = ID;
+//     h ^= h >> 16;
+//     h *= 0x85ebca6b;
+//     h ^= h >> 13;
+//     h *= 0xc2b2ae35;
+//     h ^= h >> 16;
+//     
+//     float3 result;
+//     result.x = frac(float(h) / 4294967296.0);
+//     h = h * 1664525u + 1013904223u;
+//     result.y = frac(float(h) / 4294967296.0);
+//     h = h * 1664525u + 1013904223u;
+//     result.z = frac(float(h) / 4294967296.0);
+//     
+//     return result;
+// }
+//
+// // -----------------------------------------------------------------------------
+// // 简单脉动效果
+// // -----------------------------------------------------------------------------
+// float GetPulse(uint ID, float InTime, float Speed, float Amplitude)
+// {
+//     if (Amplitude <= 0.0001f) return 1.0f;
+//     
+//     // 每个点有不同的相位，避免同步跳动
+//     float Phase = StableRandom3(ID).x * 6.28318f;
+//     float Pulse = sin(InTime * Speed + Phase);
+//     
+//     // 映射到 [1-Amp, 1+Amp]
+//     return 1.0f + Pulse * Amplitude;
+// }
+//
+// // -----------------------------------------------------------------------------
+// // Main
+// // -----------------------------------------------------------------------------
+// [numthreads(THREAD_COUNT, 1, 1)]
+// void MainCS(uint TaskIndex : SV_DispatchThreadID)
+// {
+//     if (TaskIndex >= NumPoints)
+//     {
+//         return;
+//     }
+//
+//     // 1. 稳定的随机位置（同一ID永远在同一位置）
+//     float3 Random01 = StableRandom3(TaskIndex);
+//     float3 CenterPos = lerp(BoundsMin, BoundsMax, Random01);
+//
+//     // 2. 可选的脉动效果
+//     float Scale = GetPulse(TaskIndex, Time, PulseSpeed, PulseAmplitude);
+//     float AnimatedRadius = Radius * Scale;
+//
+//     // 3. 生成球体
+//     uint StartOffset = TaskIndex * VERTS_PER_SPHERE_INSTANCE * 3;
+//     int v = 0;
+//     AppendSphere(OutInstanceVertices, StartOffset, v, CenterPos, AnimatedRadius);
+//
+//     // 4. Indirect Args
+//     if (TaskIndex == 0)
+//     {
+//         OutIndirectArgs[0] = NumPoints * VERTS_PER_SPHERE_INSTANCE; 
+//         OutIndirectArgs[1] = 1; 
+//         OutIndirectArgs[2] = 0;
+//         OutIndirectArgs[3] = 0;
+//     }
+// }
+
+/*=============================================================================
+                    GenerateScatterPlotSpheres_Stable.usf
+    
+    简化版：解决频繁更新闪烁问题
+    核心：把 Seed 固定为常量，位置就不会每帧变化
 =============================================================================*/
 
 #include "/Engine/Private/Common.ush"
@@ -8,44 +162,63 @@
 // -----------------------------------------------------------------------------
 // Shader Parameters
 // -----------------------------------------------------------------------------
-float3 BoundsMin;   // 散点分布范围 Min
-float3 BoundsMax;   // 散点分布范围 Max
-float Radius;       // 球体半径
-uint NumPoints;     // 生成的总球体数量
-float Seed;         // 随机种子
+float3 BoundsMin;
+float3 BoundsMax;
+float Radius;
+uint NumPoints;
+
+// // 动画参数（可选）
+ float Time;              // 当前时间，用于脉动效果
+float PulseAmplitude;    // 脉动幅度 (0 = 禁用, 建议 0.05~0.15)
+float PulseSpeed;        // 脉动速度 (建议 1.0~3.0)
 
 // 输出
 RWBuffer<float> OutInstanceVertices;
 RWBuffer<uint> OutIndirectArgs;
 
+// -----------------------------------------------------------------------------
+// 稳定随机函数 - 使用固定种子
+// -----------------------------------------------------------------------------
+float3 StableRandom3(uint ID, uint InSeed)
+{
+    // 使用原来验证过的算法，只是种子固定
+    float FixedSeed = float(InSeed) * 0.1234f + 12345.6789f;
+    
+    float3 p = float3(ID, ID, ID);
+    float3 noise = float3(
+        dot(p, float3(127.1, 311.7, 74.7)),
+        dot(p, float3(269.5, 183.3, 246.1)),
+        dot(p, float3(113.5, 271.9, 124.6))
+    );
+    return frac(sin(noise + FixedSeed) * 43758.5453);
+}
+
+// -----------------------------------------------------------------------------
+// Main
+// -----------------------------------------------------------------------------
 [numthreads(THREAD_COUNT, 1, 1)]
 void MainCS(uint TaskIndex : SV_DispatchThreadID)
 {
-	// 越界检查
-	if (TaskIndex >= NumPoints)
-	{
-		return;
-	}
+    if (TaskIndex >= NumPoints)
+    {
+        return;
+    }
 
-	// 1. 计算位置 (使用 Common 中的随机函数)
-	float3 Random01 = Random3(TaskIndex, Seed);
-	float3 CenterPos = lerp(BoundsMin, BoundsMax, Random01);
+    // 1. 稳定的随机位置（种子固定，同一ID永远在同一位置）
+    float3 Random01 = StableRandom3(TaskIndex, 1);
+    float3 CenterPos = lerp(BoundsMin, BoundsMax, Random01);
 
-	// 2. 生成球体
-	// 使用 Common 中定义的宏计算偏移
-	uint StartOffset = TaskIndex * VERTS_PER_SPHERE_INSTANCE * 3;
-	int v = 0; // 局部顶点计数器
+    // 2. 生成球体
+    uint StartOffset = TaskIndex * VERTS_PER_SPHERE_INSTANCE * 3;
+    int v = 0;
+    AppendSphere(OutInstanceVertices, StartOffset, v, CenterPos, Radius);
 
-	// 调用 Common 中的函数生成几何体
-	AppendSphere(OutInstanceVertices, StartOffset, v, CenterPos, Radius);
-
-	// 3. 写入 Indirect Arguments (仅第一个线程执行)
-	if (TaskIndex == 0)
-	{
-		// 使用 Common 中定义的 VERTS_PER_SPHERE_INSTANCE 确保数量一致
-		OutIndirectArgs[0] = NumPoints * VERTS_PER_SPHERE_INSTANCE; 
-		OutIndirectArgs[1] = 1; 
-		OutIndirectArgs[2] = 0;
-		OutIndirectArgs[3] = 0;
-	}
+    // 3. Indirect Args
+    if (TaskIndex == 0)
+    {
+        OutIndirectArgs[0] = NumPoints * VERTS_PER_SPHERE_INSTANCE; 
+        OutIndirectArgs[1] = 1; 
+        OutIndirectArgs[2] = 0;
+        OutIndirectArgs[3] = 0;
+    }
 }

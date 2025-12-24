@@ -1,0 +1,176 @@
+/*=============================================================================
+    VisMeshInstanceCommon.ush
+    
+    共享定义: 用于 Generate Pass 和 Cull Pass 之间的数据结构约定
+=============================================================================*/
+
+#ifndef VISMESH_INSTANCE_COMMON_USH
+#define VISMESH_INSTANCE_COMMON_USH
+
+// =============================================================================
+// 默认常量 (可在包含前 #define 覆盖)
+// =============================================================================
+
+#ifndef THREAD_COUNT
+    #define THREAD_COUNT 64
+#endif
+
+// 立方体的索引数量: 6 面 * 2 三角形 * 3 顶点
+#define CUBE_INDEX_COUNT 36
+
+// 立方体的顶点数量 (使用索引渲染时)
+#define CUBE_VERTEX_COUNT 8
+
+// =============================================================================
+// Instance Buffer 布局约定
+// =============================================================================
+// 
+// Source Buffer (全部实例，用于生成):
+// -----------------------------------------
+// SourceOrigins[NumInstances]      : float4 per instance (Position.xyz, 1.0)
+// SourceTransforms[NumInstances*3] : float4 per row, 3 rows per instance
+// SourceBounds[NumInstances]       : float4 per instance (Center.xyz, Radius)
+//
+// Visible Buffer (可见实例，用于渲染):
+// -----------------------------------------
+// VisibleOrigins[MaxVisible]       : float4 per instance
+// VisibleTransforms[MaxVisible*3]  : float4 per row, 3 rows per instance
+//
+// IndirectArgs Buffer:
+// -----------------------------------------
+// [0] IndexCountPerInstance  (36 for cube)
+// [1] InstanceCount          (由剔除结果填充)
+// [2] StartIndexLocation     (0)
+// [3] BaseVertexLocation     (0)
+// [4] StartInstanceLocation  (0)
+//
+// =============================================================================
+
+// =============================================================================
+// Transform 辅助函数
+// =============================================================================
+
+/**
+ * 从变换 Buffer 读取 3x4 矩阵的某一行
+ * @param TransformBuffer  存储变换的 Buffer
+ * @param InstanceIndex    实例索引
+ * @param RowIndex         行索引 (0, 1, 2)
+ */
+float4 ReadTransformRow(Buffer<float4> TransformBuffer, uint InstanceIndex, uint RowIndex)
+{
+    return TransformBuffer[InstanceIndex * 3 + RowIndex];
+}
+
+/**
+ * 向变换 Buffer 写入 3x4 矩阵的某一行
+ */
+void WriteTransformRow(RWBuffer<float4> TransformBuffer, uint InstanceIndex, uint RowIndex, float4 Value)
+{
+    TransformBuffer[InstanceIndex * 3 + RowIndex] = Value;
+}
+
+/**
+ * 复制一个实例的完整变换矩阵
+ * @param SrcBuffer       源 Buffer
+ * @param DstBuffer       目标 Buffer  
+ * @param SrcInstance     源实例索引
+ * @param DstInstance     目标实例索引
+ */
+void CopyInstanceTransform(
+    Buffer<float4> SrcBuffer, 
+    RWBuffer<float4> DstBuffer, 
+    uint SrcInstance, 
+    uint DstInstance)
+{
+    uint SrcOffset = SrcInstance * 3;
+    uint DstOffset = DstInstance * 3;
+    
+    DstBuffer[DstOffset + 0] = SrcBuffer[SrcOffset + 0];
+    DstBuffer[DstOffset + 1] = SrcBuffer[SrcOffset + 1];
+    DstBuffer[DstOffset + 2] = SrcBuffer[SrcOffset + 2];
+}
+
+// =============================================================================
+// Frustum Culling 辅助函数
+// =============================================================================
+
+/**
+ * 从 ViewProjectionMatrix 提取视锥的 6 个平面
+ * @param MVP       ViewProjection 矩阵 (已转置，行优先)
+ * @param Planes    输出的 6 个平面 (float4: Normal.xyz, D)
+ * 
+ * 平面顺序: Left, Right, Bottom, Top, Near, Far
+ */
+void ExtractFrustumPlanes(float4x4 MVP, out float4 Planes[6])
+{
+    // Gribb-Hartmann 方法
+    // MVP[i] 代表矩阵的第 i 行
+    Planes[0] = MVP[3] + MVP[0]; // Left:   x' + w' >= 0
+    Planes[1] = MVP[3] - MVP[0]; // Right:  w' - x' >= 0
+    Planes[2] = MVP[3] + MVP[1]; // Bottom: y' + w' >= 0
+    Planes[3] = MVP[3] - MVP[1]; // Top:    w' - y' >= 0
+    Planes[4] = MVP[3] - MVP[2]; // Near:   w' - z' >= 0 (Reversed-Z)
+    Planes[5] = MVP[2];          // Far:    z' >= 0      (Reversed-Z)
+}
+
+/**
+ * 测试球体与单个平面的关系
+ * @param Plane         平面方程 (Normal.xyz, D)，未归一化
+ * @param SphereCenter  球心位置
+ * @param SphereRadius  球体半径
+ * @return -1: 完全在负侧 (外部), 0: 相交, 1: 完全在正侧 (内部)
+ */
+int SpherePlaneTest(float4 Plane, float3 SphereCenter, float SphereRadius)
+{
+    float NormalLength = length(Plane.xyz);
+    float SignedDist = (dot(Plane.xyz, SphereCenter) + Plane.w) / NormalLength;
+    
+    if (SignedDist < -SphereRadius)
+        return -1; // 完全在外
+    else if (SignedDist > SphereRadius)
+        return 1;  // 完全在内
+    else
+        return 0;  // 相交
+}
+
+/**
+ * 快速球体视锥剔除测试
+ * @param Planes        视锥的 6 个平面
+ * @param SphereCenter  球心位置 (World Space)
+ * @param SphereRadius  球体半径
+ * @return true 如果球体可能可见
+ */
+bool FrustumCullSphere(float4 Planes[6], float3 SphereCenter, float SphereRadius)
+{
+    // 安全容差
+    float CullRadius = SphereRadius * 1.05f;
+    
+    [unroll]
+    for (int i = 0; i < 6; ++i)
+    {
+        float PlaneNormalLength = length(Planes[i].xyz);
+        float SignedDistUnnormalized = dot(Planes[i].xyz, SphereCenter) + Planes[i].w;
+        
+        if (SignedDistUnnormalized < -CullRadius * PlaneNormalLength)
+        {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+/**
+ * 计算矩阵的最大缩放因子
+ * @param M  4x4 变换矩阵
+ * @return 三个轴向缩放的最大值
+ */
+float GetMaxScale(float4x4 M)
+{
+    float ScaleX = length(float3(M[0][0], M[0][1], M[0][2]));
+    float ScaleY = length(float3(M[1][0], M[1][1], M[1][2]));
+    float ScaleZ = length(float3(M[2][0], M[2][1], M[2][2]));
+    return max(max(ScaleX, ScaleY), ScaleZ);
+}
+
+#endif // VISMESH_INSTANCE_COMMON_USH

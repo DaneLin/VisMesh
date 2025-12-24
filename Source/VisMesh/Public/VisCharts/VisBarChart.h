@@ -68,7 +68,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chart Config")
 	float HoverScale = 1.5f;
 
-	// 网格布局列数
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chart Config")
+	int NumInstances = 1000;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Chart Runtime")
 	int32 GridColumnCount = 1;
 

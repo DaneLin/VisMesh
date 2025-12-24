@@ -1,0 +1,193 @@
+/*=============================================================================
+    FrustumCullInstance.usf
+    
+    职责: 从 SourceBuffer 读取实例数据，进行视锥剔除，输出可见实例
+    特点:
+      - 每帧执行
+      - 只读取 Source Buffer，不修改
+      - 输出到 Visible Buffer + IndirectArgs
+=============================================================================*/
+
+#include "/Engine/Private/Common.ush"
+
+// -----------------------------------------------------------------------------
+// Parameters
+// -----------------------------------------------------------------------------
+int NumInstances;                   // 总实例数 (Source Buffer 中的数量)
+float4x4 ViewProjectionMatrix;      // 视锥投影矩阵 (已转置，从 C++ 传入)
+float4x4 ModelMatrix;               // 模型矩阵 (Local -> World)
+
+// -----------------------------------------------------------------------------
+// Input Buffers (Source Instance Data - 只读)
+// -----------------------------------------------------------------------------
+// 实例原点位置
+Buffer<float4> InSourceOrigins;
+
+// 实例变换矩阵
+Buffer<float4> InSourceTransforms;
+
+// 实例包围球: float4(Center.xyz, Radius)
+Buffer<float4> InSourceBounds;
+
+// -----------------------------------------------------------------------------
+// Output Buffers (Visible Instance Data)
+// -----------------------------------------------------------------------------
+// 可见实例的原点位置
+RWBuffer<float4> OutVisibleOrigins;
+
+// 可见实例的变换矩阵
+RWBuffer<float4> OutVisibleTransforms;
+
+// Indirect Draw Arguments
+// [0] = IndexCountPerInstance (36 for cube)
+// [1] = InstanceCount (由原子计数器累加)
+// [2] = StartIndexLocation (0)
+// [3] = BaseVertexLocation (0)
+// [4] = StartInstanceLocation (0)
+RWBuffer<uint> OutIndirectArgs;
+
+// -----------------------------------------------------------------------------
+// Frustum Culling Implementation
+// -----------------------------------------------------------------------------
+
+/**
+ * 从 ViewProjectionMatrix 提取视锥平面并测试球体可见性
+ * @param SphereCenter  球心位置 (World Space)
+ * @param SphereRadius  球体半径 (World Space)
+ * @return true 如果球体可能可见
+ */
+bool IsSphereVisible(float3 SphereCenter, float SphereRadius)
+{
+    // ViewProjectionMatrix 已经在 C++ 端转置
+    // M[i] 表示矩阵的第 i 行
+    float4x4 M = ViewProjectionMatrix;
+
+    // =========================================================================
+    // 1. 提取视锥平面 (Gribb-Hartmann 方法)
+    // =========================================================================
+    // 对于点 P，经过 MVP 变换后得到齐次坐标 (x', y', z', w')
+    // 可见性条件: -w' < x' < w', -w' < y' < w', 0 < z' < w' (Reversed-Z)
+    //
+    // 平面方程推导:
+    // Left:   x' + w' > 0  =>  dot(M[0] + M[3], P) > 0
+    // Right:  w' - x' > 0  =>  dot(M[3] - M[0], P) > 0
+    // Bottom: y' + w' > 0  =>  dot(M[1] + M[3], P) > 0
+    // Top:    w' - y' > 0  =>  dot(M[3] - M[1], P) > 0
+    // Near:   z' > 0       =>  dot(M[2], P) > 0         (Reversed-Z)
+    // Far:    w' - z' > 0  =>  dot(M[3] - M[2], P) > 0  (Reversed-Z)
+    // =========================================================================
+    
+    float4 Planes[6];
+    Planes[0] = M[3] + M[0]; // Left
+    Planes[1] = M[3] - M[0]; // Right
+    Planes[2] = M[3] + M[1]; // Bottom
+    Planes[3] = M[3] - M[1]; // Top
+    Planes[4] = M[3] - M[2]; // Near (Reversed-Z: clip z < clip w)
+    Planes[5] = M[2];        // Far  (Reversed-Z: clip z > 0)
+
+    // =========================================================================
+    // 2. 球体 vs 平面测试
+    // =========================================================================
+    // 增加安全容差，防止 TAA 抖动导致边缘物体闪烁
+    float CullRadius = SphereRadius * 1.05f;
+
+    [unroll]
+    for (int i = 0; i < 6; ++i)
+    {
+        float4 Plane = Planes[i];
+        
+        // 平面方程: dot(Normal, P) + D = 0
+        // 其中 Plane.xyz = Normal (未归一化), Plane.w = D
+        //
+        // 点到平面的有符号距离:
+        // SignedDist = (dot(Normal, P) + D) / length(Normal)
+        //
+        // 球体完全在平面负侧的条件:
+        // SignedDist < -Radius
+        // => (dot(Normal, P) + D) / length(Normal) < -Radius
+        // => dot(Normal, P) + D < -Radius * length(Normal)
+        
+        float PlaneNormalLength = length(Plane.xyz);
+        float SignedDistUnnormalized = dot(Plane.xyz, SphereCenter) + Plane.w;
+
+        if (SignedDistUnnormalized < -CullRadius * PlaneNormalLength)
+        {
+            return false; // 球体完全在视锥外
+        }
+    }
+
+    return true; // 球体可能可见 (或部分可见)
+}
+
+// -----------------------------------------------------------------------------
+// Main Compute Shader
+// -----------------------------------------------------------------------------
+[numthreads(THREAD_COUNT, 1, 1)]
+void MainCS(uint TaskIndex : SV_DispatchThreadID)
+{
+    // =========================================================================
+    // 0. 初始化 Indirect Args (仅第一个线程)
+    // =========================================================================
+    if (TaskIndex == 0)
+    {
+        OutIndirectArgs[0] = 36; // IndexCountPerInstance (立方体: 12 三角形 * 3 顶点)
+        // OutIndirectArgs[1] 由 InterlockedAdd 填充 (InstanceCount)
+        OutIndirectArgs[2] = 0;  // StartIndexLocation
+        OutIndirectArgs[3] = 0;  // BaseVertexLocation
+        OutIndirectArgs[4] = 0;  // StartInstanceLocation
+    }
+
+    // 边界检查
+    if (TaskIndex >= (uint)NumInstances)
+        return;
+
+    // =========================================================================
+    // 1. 从 Source Buffer 读取数据
+    // =========================================================================
+    float4 SourceOrigin = InSourceOrigins[TaskIndex];
+    float4 SourceBound = InSourceBounds[TaskIndex];
+    
+    float3 LocalBoundCenter = SourceBound.xyz;
+    float LocalRadius = SourceBound.w;
+
+    // =========================================================================
+    // 2. 将包围球变换到世界空间
+    // =========================================================================
+    float3 WorldBoundCenter = mul(float4(LocalBoundCenter, 1.0f), ModelMatrix).xyz;
+
+    // 计算模型矩阵的最大缩放因子 (用于缩放半径)
+    float ScaleX = length(float3(ModelMatrix[0][0], ModelMatrix[0][1], ModelMatrix[0][2]));
+    float ScaleY = length(float3(ModelMatrix[1][0], ModelMatrix[1][1], ModelMatrix[1][2]));
+    float ScaleZ = length(float3(ModelMatrix[2][0], ModelMatrix[2][1], ModelMatrix[2][2]));
+    float MaxScale = max(max(ScaleX, ScaleY), ScaleZ);
+
+    float WorldRadius = LocalRadius * MaxScale;
+
+    // =========================================================================
+    // 3. 视锥剔除测试
+    // =========================================================================
+    if (!IsSphereVisible(WorldBoundCenter, WorldRadius))
+    {
+        return; // 不可见，跳过
+    }
+
+    // =========================================================================
+    // 4. 原子递增获取写入索引
+    // =========================================================================
+    uint WriteIndex;
+    InterlockedAdd(OutIndirectArgs[1], 1, WriteIndex);
+
+    // =========================================================================
+    // 5. 复制数据到 Visible Buffer
+    // =========================================================================
+    // 复制原点
+    OutVisibleOrigins[WriteIndex] = SourceOrigin;
+
+    // 复制变换矩阵 (3 个 float4)
+    uint SrcTransformOffset = TaskIndex * 3;
+    uint DstTransformOffset = WriteIndex * 3;
+    
+    OutVisibleTransforms[DstTransformOffset + 0] = InSourceTransforms[SrcTransformOffset + 0];
+    OutVisibleTransforms[DstTransformOffset + 1] = InSourceTransforms[SrcTransformOffset + 1];
+    OutVisibleTransforms[DstTransformOffset + 2] = InSourceTransforms[SrcTransformOffset + 2];
+}

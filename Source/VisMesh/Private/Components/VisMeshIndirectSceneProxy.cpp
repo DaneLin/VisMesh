@@ -165,7 +165,7 @@ FMeshBatch* FVisMeshIndirectSceneProxy::CreateMeshBatch(class FMeshElementCollec
 
 	FMeshBatch& MeshBatch = Collector.AllocateMesh();
 
-	MeshBatch.CastShadow = true;
+	MeshBatch.CastShadow = false;
 	MeshBatch.bUseForDepthPass = true;
 	MeshBatch.SegmentIndex = 0;
 
@@ -204,7 +204,7 @@ void FVisMeshIndirectSceneProxy::DispatchComputePass_RenderThread(FRDGBuilder& G
 			{
 				// 绘制散点图
 				// 注意：对于散点图，如果只运行一次，Time/Seed 参数最好是固定的，或者只在初始化时随机一次
-				AddGenerateScatterPlotSpherePass(GraphBuilder, PositionBuffer->GetUAV(), IndirectArgsBufferUAV, BoundsMin, BoundsMax, Radius, NumPoints, 10);
+				AddGenerateScatterPlotSpherePass(GraphBuilder, PositionBuffer->GetUAV(), IndirectArgsBufferUAV, BoundsMin, BoundsMax, Radius, NumPoints, CurrentTime,0, 1 );
 			}
 
 			// 标记已运行。
