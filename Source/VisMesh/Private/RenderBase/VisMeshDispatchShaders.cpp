@@ -7,6 +7,7 @@ IMPLEMENT_GLOBAL_SHADER(FPopulateBoxChartInstanceBufferCS, "/VisMeshPlugin/Dispa
 IMPLEMENT_GLOBAL_SHADER(FPopulateBoxChartFrustumCulledInstanceBufferCS, "/VisMeshPlugin/DispatchShaders/PopulateBoxChartFrustumCulledInstanceBuffer.usf", "MainCS",SF_Compute);
 IMPLEMENT_GLOBAL_SHADER(FPopulateBoxWireframeBufferCS, "/VisMeshPlugin/DispatchShaders/PopulateBoxWireframeBuffer.usf", "MainCS",SF_Compute);
 IMPLEMENT_GLOBAL_SHADER(FPopulateBoxWireframeMiterBufferCS, "/VisMeshPlugin/DispatchShaders/PopulateBoxWireframeBuffer_Miter.usf", "MainCS",SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FGenerateScatterPlotSphereCS, "/VisMeshPlugin/DispatchShaders/GenerateScatterPlotSpheres.usf", "MainCS",SF_Compute);
 
 void FPopulateVertexAndIndirectBufferCS::ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 {
@@ -33,6 +34,13 @@ void FPopulateBoxWireframeBufferCS::ModifyCompilationEnvironment(const FGlobalSh
 }
 
 void FPopulateBoxWireframeMiterBufferCS::ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+{
+	FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+	OutEnvironment.SetDefine(TEXT("THREAD_COUNT"), ThreadGroupSize);
+}
+
+void FGenerateScatterPlotSphereCS::ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters,
+	FShaderCompilerEnvironment& OutEnvironment)
 {
 	FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
 	OutEnvironment.SetDefine(TEXT("THREAD_COUNT"), ThreadGroupSize);

@@ -11,9 +11,18 @@ public:
 
 	float XSpace, YSpace;
 	int32 NumColumns, NumInstances;
+	
+	FVector3f BoundsMin,BoundsMax;
+	float Radius;
+	int NumPoints;
+
+	bool bDrawSphere;
+	bool bUpdateEverTick;
 
 	UMaterialInterface* Material;
 
+	bool bHasInitialUpdateRun;
+	
 public:
 	FVisMeshIndirectSceneProxy(UVisMeshIndirectComponent* Owner) ;
 

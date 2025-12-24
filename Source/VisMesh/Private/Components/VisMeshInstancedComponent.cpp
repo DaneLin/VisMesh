@@ -62,12 +62,3 @@ void UVisMeshInstancedComponent::GetUsedMaterials(TArray<UMaterialInterface*>& O
 	}
 }
 
-#if WITH_EDITOR
-void UVisMeshInstancedComponent::PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent)
-{
-	Super::PostEditChangeProperty(PropertyChangedEvent);
-
-	MarkRenderStateDirty();
-}
-#endif
-

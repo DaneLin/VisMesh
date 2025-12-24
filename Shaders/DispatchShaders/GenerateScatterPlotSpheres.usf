@@ -1,0 +1,51 @@
+/*=============================================================================
+						GenerateScatterPlotSpheres.usf
+=============================================================================*/
+
+#include "/Engine/Private/Common.ush"
+#include "../CommonBase/VisMeshDrawCommon.ush" 
+
+// -----------------------------------------------------------------------------
+// Shader Parameters
+// -----------------------------------------------------------------------------
+float3 BoundsMin;   // 散点分布范围 Min
+float3 BoundsMax;   // 散点分布范围 Max
+float Radius;       // 球体半径
+uint NumPoints;     // 生成的总球体数量
+float Seed;         // 随机种子
+
+// 输出
+RWBuffer<float> OutInstanceVertices;
+RWBuffer<uint> OutIndirectArgs;
+
+[numthreads(THREAD_COUNT, 1, 1)]
+void MainCS(uint TaskIndex : SV_DispatchThreadID)
+{
+	// 越界检查
+	if (TaskIndex >= NumPoints)
+	{
+		return;
+	}
+
+	// 1. 计算位置 (使用 Common 中的随机函数)
+	float3 Random01 = Random3(TaskIndex, Seed);
+	float3 CenterPos = lerp(BoundsMin, BoundsMax, Random01);
+
+	// 2. 生成球体
+	// 使用 Common 中定义的宏计算偏移
+	uint StartOffset = TaskIndex * VERTS_PER_SPHERE_INSTANCE * 3;
+	int v = 0; // 局部顶点计数器
+
+	// 调用 Common 中的函数生成几何体
+	AppendSphere(OutInstanceVertices, StartOffset, v, CenterPos, Radius);
+
+	// 3. 写入 Indirect Arguments (仅第一个线程执行)
+	if (TaskIndex == 0)
+	{
+		// 使用 Common 中定义的 VERTS_PER_SPHERE_INSTANCE 确保数量一致
+		OutIndirectArgs[0] = NumPoints * VERTS_PER_SPHERE_INSTANCE; 
+		OutIndirectArgs[1] = 1; 
+		OutIndirectArgs[2] = 0;
+		OutIndirectArgs[3] = 0;
+	}
+}

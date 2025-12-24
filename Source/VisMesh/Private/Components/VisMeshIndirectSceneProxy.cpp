@@ -18,6 +18,16 @@ FVisMeshIndirectSceneProxy::FVisMeshIndirectSceneProxy(UVisMeshIndirectComponent
 	XSpace = Owner->XSpace;
 	YSpace = Owner->YSpace;
 	NumColumns = Owner->NumColumns;
+
+	// Scatter
+	BoundsMin = Owner->BoundsMin;
+	BoundsMax = Owner->BoundsMax;
+	Radius = Owner->Radius;
+	NumPoints = Owner->NumPoints;
+	bDrawSphere = Owner->bDrawSphere;
+	bUpdateEverTick = Owner->bUpdateEverTick;
+
+	bHasInitialUpdateRun = false;
 }
 
 SIZE_T FVisMeshIndirectSceneProxy::GetTypeHash() const
@@ -47,10 +57,15 @@ FPrimitiveViewRelevance FVisMeshIndirectSceneProxy::GetViewRelevance(const FScen
 void FVisMeshIndirectSceneProxy::CreateRenderThreadResources()
 {
 	check(VertexFactory == nullptr);
-
+	bHasInitialUpdateRun = false;
+	
 	FRHICommandListBase& RHICmdList = FRHICommandListImmediate::Get();
 
-	int32 TotalVertices = NumInstances * GNumVertsPerBox;
+	int32 TotalVertices = 0;
+	if (!bDrawSphere)
+		TotalVertices = NumInstances * GNumVertsPerBox;
+	else
+		TotalVertices = NumPoints * 8 * 6 * 6;
 
 	PositionBuffer = new FPositionUAVVertexBuffer(TotalVertices);
 	PositionBuffer->InitResource(RHICmdList);
@@ -173,9 +188,29 @@ void FVisMeshIndirectSceneProxy::DispatchComputePass_RenderThread(FRDGBuilder& G
 {
 	if (PositionBuffer && IndirectArgsBuffer)
 	{
-		const float CurrentTime = ViewFamily.Time.GetRealTimeSeconds();
-            
-		// 调用具体的 Pass 添加函数 (这个函数可以是静态的，或者 VisMeshUtils 里的)
-		AddPopulateVertexPass(GraphBuilder,PositionBuffer->GetUAV(),IndirectArgsBufferUAV,XSpace, YSpace, NumColumns, NumInstances, CurrentTime);
+		// 逻辑：如果是每帧更新(bUpdateEverTick)，或者 尚未运行过初始化(!bHasInitialUpdateRun)，则执行
+		bool bShouldDispatch = bUpdateEverTick || !bHasInitialUpdateRun;
+
+		if (bShouldDispatch)
+		{
+			const float CurrentTime = ViewFamily.Time.GetRealTimeSeconds();
+
+			if (!bDrawSphere)
+			{
+				// 绘制柱状图
+				AddPopulateVertexPass(GraphBuilder, PositionBuffer->GetUAV(), IndirectArgsBufferUAV, XSpace, YSpace, NumColumns, NumInstances, CurrentTime);
+			}
+			else
+			{
+				// 绘制散点图
+				// 注意：对于散点图，如果只运行一次，Time/Seed 参数最好是固定的，或者只在初始化时随机一次
+				AddGenerateScatterPlotSpherePass(GraphBuilder, PositionBuffer->GetUAV(), IndirectArgsBufferUAV, BoundsMin, BoundsMax, Radius, NumPoints, 10);
+			}
+
+			// 标记已运行。
+			// 如果 bUpdateEverTick 为 true，这行代码虽有多余但无害。
+			// 如果 bUpdateEverTick 为 false，这行代码确保下一帧进来时 bShouldDispatch 为 false。
+			bHasInitialUpdateRun = true;
+		}
 	}
 }

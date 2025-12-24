@@ -42,3 +42,12 @@ void UVisMeshComponentBase::OnUnregister()
 
 	Super::OnUnregister(); // 必须调用
 }
+
+#if WITH_EDITOR
+void UVisMeshComponentBase::PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	MarkRenderStateDirty();
+}
+#endif

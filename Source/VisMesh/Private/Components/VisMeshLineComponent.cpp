@@ -32,11 +32,3 @@ void UVisMeshLineComponent::GetUsedMaterials(TArray<UMaterialInterface*>& OutMat
 		OutMaterials.Add(Material);
 	}
 }
-#if WITH_EDITOR
-void UVisMeshLineComponent::PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent)
-{
-	Super::PostEditChangeProperty(PropertyChangedEvent);
-
-	MarkRenderStateDirty();
-}
-#endif

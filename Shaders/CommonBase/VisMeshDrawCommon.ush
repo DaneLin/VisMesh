@@ -1,6 +1,33 @@
 // 每个立方体需要的顶点数: 6个面 * 2个三角形 * 3个顶点 = 36
 #define VERTS_PER_BOX_INSTANCE 36
 
+// 球体细分度配置 (默认值)
+#ifndef SPHERE_SEGS
+	#define SPHERE_SEGS 8   // 经度切片
+#endif
+
+#ifndef SPHERE_RINGS
+	#define SPHERE_RINGS 6  // 纬度切片
+#endif
+
+// 计算球体总顶点数: Rings * Segs * 2(Triangles) * 3(Verts)
+#define VERTS_PER_SPHERE_INSTANCE (SPHERE_RINGS * SPHERE_SEGS * 6)
+
+/**
+ * 伪随机数生成器 (基于 ID 和 Seed)
+ * 返回: float3 (0.0 ~ 1.0)
+ */
+float3 Random3(uint ID, float InSeed)
+{
+	float3 p = float3(ID, ID, ID);
+	float3 noise = float3(
+		dot(p, float3(127.1, 311.7, 74.7)),
+		dot(p, float3(269.5, 183.3, 246.1)),
+		dot(p, float3(113.5, 271.9, 124.6))
+	);
+	return frac(sin(noise + InSeed) * 43758.5453);
+}
+
 void WriteVertex(RWBuffer<float> OutInstanceVertices, uint StartOffset, uint VIdx, float3 Pos)
 {
 	OutInstanceVertices[StartOffset + (VIdx) * 3 + 0] = Pos.x;
@@ -130,4 +157,63 @@ void AppendLineSegment(
 	WriteVertex(OutBuffer, StartOffset, v++, V0);
 	WriteVertex(OutBuffer, StartOffset, v++, V2);
 	WriteVertex(OutBuffer, StartOffset, v++, V3);
+}
+
+/**
+ * 球面坐标转笛卡尔坐标
+ */
+float3 GetSpherePoint(float Theta, float Phi, float R)
+{
+	float x = R * sin(Theta) * cos(Phi);
+	float y = R * sin(Theta) * sin(Phi);
+	float z = R * cos(Theta);
+	return float3(x, y, z);
+}
+
+/**
+ * 生成球体几何体
+ * @param OutBuffer    输出顶点缓冲区
+ * @param StartOffset  当前Instance在缓冲区中的起始偏移
+ * @param v            [inout] 当前顶点计数器
+ * @param Center       球心位置
+ * @param Radius       半径
+ */
+void AppendSphere(RWBuffer<float> OutBuffer, uint StartOffset, inout int v, float3 Center, float Radius)
+{
+	// 遍历纬度 (Rings)
+	for (int r = 0; r < SPHERE_RINGS; ++r)
+	{
+		// 遍历经度 (Segments)
+		for (int s = 0; s < SPHERE_SEGS; ++s)
+		{
+			// 计算当前格子的四个角的比例 (0~1)
+			float r0 = (float)r / (float)SPHERE_RINGS;
+			float r1 = (float)(r + 1) / (float)SPHERE_RINGS;
+			float s0 = (float)s / (float)SPHERE_SEGS;
+			float s1 = (float)(s + 1) / (float)SPHERE_SEGS;
+
+			// 转换为弧度
+			float theta0 = r0 * PI;
+			float theta1 = r1 * PI;
+			float phi0 = s0 * 2.0f * PI;
+			float phi1 = s1 * 2.0f * PI;
+
+			// 计算四个角的局部坐标 + 偏移
+			float3 p0 = Center + GetSpherePoint(theta0, phi0, Radius); // Top-Left
+			float3 p1 = Center + GetSpherePoint(theta0, phi1, Radius); // Top-Right
+			float3 p2 = Center + GetSpherePoint(theta1, phi0, Radius); // Bottom-Left
+			float3 p3 = Center + GetSpherePoint(theta1, phi1, Radius); // Bottom-Right
+
+			// 写入两个三角形 (逆时针 CCW)
+			// Triangle 1: Top-Left -> Bottom-Left -> Top-Right
+			WriteVertex(OutBuffer, StartOffset, v++, p0); // [cite: 1]
+			WriteVertex(OutBuffer, StartOffset, v++, p2);
+			WriteVertex(OutBuffer, StartOffset, v++, p1);
+
+			// Triangle 2: Top-Right -> Bottom-Left -> Bottom-Right
+			WriteVertex(OutBuffer, StartOffset, v++, p1);
+			WriteVertex(OutBuffer, StartOffset, v++, p2);
+			WriteVertex(OutBuffer, StartOffset, v++, p3);
+		}
+	}
 }

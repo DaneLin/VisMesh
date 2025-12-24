@@ -77,13 +77,6 @@ bool IsSphereVisible(float3 SphereCenter, float SphereRadius)
 [numthreads(THREAD_COUNT, 1, 1)]
 void MainCS(uint TaskIndex : SV_DispatchThreadID)
 {
-    if (TaskIndex == 0)
-    {
-        uint PlaceHolder = 0;
-        InterlockedExchange(OutIndirectArgs[1], 0, PlaceHolder);
-    }
-
-    GroupMemoryBarrierWithGroupSync();
 
     if (TaskIndex >= (uint)NumInstances) return;
     

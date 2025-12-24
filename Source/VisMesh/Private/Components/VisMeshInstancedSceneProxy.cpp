@@ -4,6 +4,7 @@
 #include "RenderGraphResources.h"
 #include "RenderGraphUtils.h"
 #include "Components/VisMeshInstancedComponent.h"
+#include "Experimental/Graph/GraphConvert.h"
 #include "RenderBase/VisMeshInstancedVertexFactory.h"
 #include "Utils/VisMeshUtils.h"
 
@@ -136,7 +137,7 @@ void FVisMeshInstancedSceneProxy::CreateRenderThreadResources()
     EBufferUsageFlags IndirectUsage = EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::DrawIndirect | EBufferUsageFlags::ShaderResource;
 
     FBufferRHIRef RawIndirectBuffer = RHICmdList.CreateBuffer(
-        IndirectDesc.BytesPerElement * IndirectDesc.NumElements,
+        IndirectSize,
         IndirectUsage,
         IndirectDesc.BytesPerElement,
         ERHIAccess::IndirectArgs, // 初始状态
@@ -251,6 +252,17 @@ void FVisMeshInstancedSceneProxy::DispatchComputePass_RenderThread(FRDGBuilder& 
 	if (PositionBuffer && IndirectArgsBuffer && InstanceBuffer)
 	{
 		const float CurrentTime = ViewFamily.Time.GetRealTimeSeconds();
+		// 1. 注册外部资源 (前提：IndirectArgsBuffer 类型已改为 TRefCountPtr<FRDGPooledBuffer>)
+		FRDGBufferRef IndirectArgsRDG = GraphBuilder.RegisterExternalBuffer(IndirectArgsBuffer);
+
+
+		FRDGBufferUAVRef ClearUAV = GraphBuilder.CreateUAV(IndirectArgsRDG, PF_R32_UINT);
+		
+		//AddCopyBufferPass(GraphBuilder, IndirectArgsRDG, ResetBuffer);
+
+		AddClearUAVPass(GraphBuilder, ClearUAV, 0);
+
+		FRDGBufferUAVRef IndirectArgsUAVRDG = GraphBuilder.CreateUAV(IndirectArgsRDG, PF_R32_UINT);
 		
 		// 1. 获取主视图的 ViewProjectionMatrix
 		FMatrix ViewProjMatrix = FMatrix::Identity;
@@ -260,13 +272,13 @@ void FVisMeshInstancedSceneProxy::DispatchComputePass_RenderThread(FRDGBuilder& 
 			ViewProjMatrix = MainView->ViewMatrices.GetViewProjectionMatrix();
 		}
 		FMatrix44f ViewProjectionMatrix = FMatrix44f(ViewProjMatrix.GetTransposed());
-
 		FMatrix44f ModelMatrix = FMatrix44f(GetLocalToWorld());
+		AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(IndirectArgsRDG),0);
 		// 调用具体的 Pass 添加函数 (这个函数可以是静态的，或者 VisMeshUtils 里的)
 		AddBoxChartFrustumCulledInstancePass(GraphBuilder,
 									InstanceBuffer->GetOriginUAV(),
 		                          InstanceBuffer->GetTransformUAV(), // 传入 Instance Buffer UAV
-		                          IndirectArgsBufferUAV,
+		                          IndirectArgsUAVRDG,
 		                          XSpace, YSpace, NumColumns, NumInstances, CurrentTime,ViewProjectionMatrix, ModelMatrix
 		);
 	}

@@ -23,6 +23,24 @@ public:
 	float YSpace = 100.0f;
 
 	UPROPERTY(EditAnywhere, Category = "GenerationArgs")
+	FVector3f BoundsMin = FVector3f::ZeroVector;
+
+	UPROPERTY(EditAnywhere, Category = "GenerationArgs")
+	FVector3f BoundsMax = FVector3f(10, 10, 10);
+
+	UPROPERTY(EditAnywhere, Category = "GenerationArgs")
+	float Radius = 10.f;
+
+	UPROPERTY(EditAnywhere, Category = "GenerationArgs")
+	int NumPoints = 10;
+
+	UPROPERTY(EditAnywhere, Category = "GenerationArgs")
+	bool bDrawSphere;
+
+	UPROPERTY(EditAnywhere, Category = "GenerationArgs")
+	bool bUpdateEverTick = false;
+
+	UPROPERTY(EditAnywhere, Category = "GenerationArgs")
 	UMaterialInterface* Material;
 	
 	virtual FPrimitiveSceneProxy* CreateSceneProxy() override;
@@ -30,7 +48,5 @@ public:
 
 	virtual void GetUsedMaterials(TArray<UMaterialInterface*>& OutMaterials, bool bGetDebugMaterials) const override;
 	
-#if WITH_EDITOR
-	virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;	
-#endif
+
 };

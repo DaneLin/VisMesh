@@ -118,11 +118,12 @@ void AddBoxChartInstancingPass(FRDGBuilder& GraphBuilder,FRHIUnorderedAccessView
 DECLARE_GPU_DRAWCALL_STAT(PopulateInstanceCulledPass);
 
 void AddBoxChartFrustumCulledInstancePass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* InstanceOriginBuffersUAV,
-	FRHIUnorderedAccessView* InstanceTransformsUAV, FRHIUnorderedAccessView* IndirectArgsBufferUAV, float InXSpace,
+	FRHIUnorderedAccessView* InstanceTransformsUAV, FRDGBufferUAVRef IndirectArgsBufferUAV, float InXSpace,
 	float InYSpace, int32 InNumColumns, int32 InNumInstances, float InTime, FMatrix44f InProjectionViewMatrix, FMatrix44f InWorldMatrix)
 {
 	RDG_GPU_STAT_SCOPE(GraphBuilder, PopulateInstanceCulledPass);
 	RDG_EVENT_SCOPE(GraphBuilder, "PopulateInstanceCulledPass");
+
 
 	TShaderMapRef<FPopulateBoxChartFrustumCulledInstanceBufferCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
 
@@ -186,13 +187,16 @@ void AddBoxWireframePass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* Pos
 		FIntVector(GroupCount, 1, 1));
 }
 
+DECLARE_GPU_DRAWCALL_STAT(PopulateWireFramePassMiter);
+
+
 void AddBoxWireframePass_Miter(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* PositionsUAV,
 	FRHIUnorderedAccessView* IndirectArgsBufferUAV, float InXSpace, float InYSpace, int32 InNumColumns,
 	int32 InNumInstances, float InLineWidth, float InTime, FVector4f InCameraPosition, FVector2f ViewportSize,
 	float TanHalfFOV)
 {
-	RDG_GPU_STAT_SCOPE(GraphBuilder, PopulateWireFramePass); // for unreal insights
-	RDG_EVENT_SCOPE(GraphBuilder, "PopulateWireFramePass"); // for render doc
+	RDG_GPU_STAT_SCOPE(GraphBuilder, PopulateWireFramePassMiter); // for unreal insights
+	RDG_EVENT_SCOPE(GraphBuilder, "PopulateWireFramePassMiter"); // for render doc
 
 	TShaderMapRef<FPopulateBoxWireframeMiterBufferCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
 
@@ -215,6 +219,38 @@ void AddBoxWireframePass_Miter(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessVie
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
 		RDG_EVENT_NAME("PopulateWireFramePass"),
+		ERDGPassFlags::Compute | ERDGPassFlags::NeverCull,
+		ComputeShader,
+		PassParameters,
+		FIntVector(GroupCount, 1, 1));
+}
+
+DECLARE_GPU_DRAWCALL_STAT(GenerateScatterPlotSpherePass);
+
+void AddGenerateScatterPlotSpherePass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* PositionsUAV,
+	FRHIUnorderedAccessView* IndirectArgsBufferUAV, FVector3f BoundsMin, FVector3f BoundsMax, float Radius,
+	int32 NumPoints, float Seed)
+{
+	RDG_GPU_STAT_SCOPE(GraphBuilder, GenerateScatterPlotSpherePass); // for unreal insights
+	RDG_EVENT_SCOPE(GraphBuilder, "GenerateScatterPlotSpherePass"); // for render doc
+
+	TShaderMapRef<FGenerateScatterPlotSphereCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
+
+	FGenerateScatterPlotSphereCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FGenerateScatterPlotSphereCS::FParameters>();
+	PassParameters->OutInstanceVertices = PositionsUAV;
+	PassParameters->OutIndirectArgs = IndirectArgsBufferUAV;
+	PassParameters->BoundsMin = BoundsMin;
+	PassParameters->BoundsMin = BoundsMax;
+	PassParameters->Radius = Radius;
+	PassParameters->NumPoints = NumPoints;
+	PassParameters->Seed = Seed;
+
+	// 计算 GroupCount
+	int32 GroupCount = FMath::DivideAndRoundUp(NumPoints,(int32)FPopulateBoxWireframeMiterBufferCS::ThreadGroupSize);
+
+	FComputeShaderUtils::AddPass(
+		GraphBuilder,
+		RDG_EVENT_NAME("GenerateScatterPlotSpherePass"),
 		ERDGPassFlags::Compute | ERDGPassFlags::NeverCull,
 		ComputeShader,
 		PassParameters,

@@ -13,4 +13,8 @@ public:
 	
 	virtual void OnRegister() override;
 	virtual void OnUnregister() override;
+
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;	
+#endif
 };

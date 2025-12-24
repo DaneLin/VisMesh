@@ -27,7 +27,7 @@ static void AddBoxChartInstancingPass(FRDGBuilder& GraphBuilder, FRHIUnorderedAc
 
 static void AddBoxChartFrustumCulledInstancePass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* InstanceOriginBuffersUAV,
 									  FRHIUnorderedAccessView* InstanceTransformsUAV,
-									  FRHIUnorderedAccessView* IndirectArgsBufferUAV, float InXSpace, float InYSpace,
+									  FRDGBufferUAVRef IndirectArgsBufferUAV, float InXSpace, float InYSpace,
 									  int32 InNumColumns, int32 InNumInstances, float InTime, FMatrix44f InProjectionViewMatrix, FMatrix44f InWorldMatrix);
 
 
@@ -38,3 +38,6 @@ static void AddBoxWireframePass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessVi
 static void AddBoxWireframePass_Miter(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* PositionsUAV,
 								FRHIUnorderedAccessView* IndirectArgsBufferUAV, float InXSpace, float InYSpace,
 								int32 InNumColumns, int32 InNumInstances, float InLineWidth, float InTime, FVector4f InCameraPosition,FVector2f ViewportSize,float TanHalfFOV);
+
+static void AddGenerateScatterPlotSpherePass(FRDGBuilder& GraphBuilder, FRHIUnorderedAccessView* PositionsUAV,
+								FRHIUnorderedAccessView* IndirectArgsBufferUAV, FVector3f BoundsMin, FVector3f BoundsMax, float Radius, int32 NumPoints, float Seed);

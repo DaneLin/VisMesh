@@ -1,0 +1,22 @@
+/*=============================================================================
+    PopulateVertexAndIndirectBuffer.usf
+    生成 Instance Transform (Instanced Rendering Mode)
+=============================================================================*/
+
+#include "/Engine/Private/Common.ush"
+
+RWBuffer<uint> OutIndirectArgs;             // 输出：间接绘制参数
+
+[numthreads(1, 1, 1)]
+void MainCS(uint TaskIndex : SV_DispatchThreadID)
+{
+    // 5. 写入 Indirect Arguments (仅需由第0个线程写入一次)
+    if (TaskIndex == 0)
+    {
+        // 假设每个 Box 有 36 个顶点 (6面 * 2三角形 * 3顶点)
+        OutIndirectArgs[0] = 36;            // VertexCountPerInstance
+        OutIndirectArgs[1] = 0;             // InstanceCount
+        OutIndirectArgs[2] = 0;             // StartVertexLocation
+        OutIndirectArgs[3] = 0;             // StartInstanceLocation
+    }
+}

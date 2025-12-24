@@ -63,7 +63,7 @@ public:
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, VISMESH_API)
 		SHADER_PARAMETER_UAV(RWBuffer<float4>, OutInstanceOriginBuffer)
 		SHADER_PARAMETER_UAV(RWBuffer<float4>, OutInstanceTransforms)
-		SHADER_PARAMETER_UAV(RWBuffer<uint>, OutIndirectArgs)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, OutIndirectArgs)
 
 		SHADER_PARAMETER(float, XSpace)
 		SHADER_PARAMETER(float, YSpace)
@@ -124,6 +124,28 @@ public:
 		SHADER_PARAMETER(FVector2f, ViewportSize)
 		SHADER_PARAMETER(float, TanHalfFOV)
 		SHADER_PARAMETER(FVector4f, CameraPos)
+	END_SHADER_PARAMETER_STRUCT()
+
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment);
+};
+
+class FGenerateScatterPlotSphereCS : public FGlobalShader
+{
+	SHADER_USE_PARAMETER_STRUCT(FGenerateScatterPlotSphereCS, FGlobalShader);
+	DECLARE_EXPORTED_GLOBAL_SHADER(FGenerateScatterPlotSphereCS, VISMESH_API);
+
+public:
+	static constexpr uint32 ThreadGroupSize = 256;
+	
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, VISMESH_API)
+		SHADER_PARAMETER_UAV(RWBuffer<float>, OutInstanceVertices)
+		SHADER_PARAMETER_UAV(RWBuffer<uint>, OutIndirectArgs)
+
+		SHADER_PARAMETER(FVector3f, BoundsMin)
+		SHADER_PARAMETER(float, Radius)
+		SHADER_PARAMETER(FVector3f, BoundsMax)
+		SHADER_PARAMETER(int, NumPoints)
+		SHADER_PARAMETER(float, Seed)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment);
