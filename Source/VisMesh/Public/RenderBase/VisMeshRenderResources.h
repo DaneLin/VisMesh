@@ -218,6 +218,45 @@ private:
 	FUnorderedAccessViewRHIRef UAV;
 };
 
+class FVisMeshIndexBuffer : public FIndexBuffer
+{
+public:
+	TArray<uint32> Indices;
+
+	FVisMeshIndexBuffer(const TArray<uint32>& InIndices)
+		: Indices(InIndices)
+	{
+	}
+
+	virtual void InitRHI(FRHICommandListBase& RHICmdList) override
+	{
+		if (Indices.Num() > 0)
+		{
+			FRHIResourceCreateInfo CreateInfo(TEXT("VisMeshIndexBuffer"));
+            
+			const uint32 Size = Indices.Num() * sizeof(uint32);
+            
+			IndexBufferRHI = RHICmdList.CreateIndexBuffer(
+				sizeof(uint32),
+				Size,
+				BUF_Static,
+				CreateInfo
+			);
+
+			void* BufferData = RHICmdList.LockBuffer(IndexBufferRHI, 0, Size, RLM_WriteOnly);
+			FMemory::Memcpy(BufferData, Indices.GetData(), Size);
+			RHICmdList.UnlockBuffer(IndexBufferRHI);
+		}
+	}
+
+	virtual void ReleaseRHI() override
+	{
+		IndexBufferRHI.SafeRelease();
+		FIndexBuffer::ReleaseRHI();
+	}
+};
+
+
 /** * 管理类：组合了 Origin, Transform, Lightmap 三个独立的 Buffer
  * 注意：这里不再继承 FVertexBuffer，而是继承 FRenderResource，因为它管理着多个 VertexBuffer
  */

@@ -14,6 +14,7 @@ FVisMeshInstancedSceneProxy::FVisMeshInstancedSceneProxy(UVisMeshInstancedCompon
 	  , PositionBuffer{nullptr}
 	  , IndirectArgsBuffer{nullptr}
 	  , InstanceBuffer{nullptr}
+		, IndexBuffer{nullptr}
 	  , Material(Owner->Material)
 {
 	bVFRequiresPrimitiveUniformBuffer = true;
@@ -48,6 +49,43 @@ FPrimitiveViewRelevance FVisMeshInstancedSceneProxy::GetViewRelevance(const FSce
 	return Result;
 }
 
+void GetUnitCubeIndices(TArray<uint32>& OutIndices)
+{
+	OutIndices.Empty(36);
+
+	// 顶点排列:
+	//     7-------6
+	//    /|      /|
+	//   4-------5 |
+	//   | 3-----|-2
+	//   |/      |/
+	//   0-------1
+
+	// 1. Bottom (-Z): 0,1,2,3
+	OutIndices.Add(0); OutIndices.Add(1); OutIndices.Add(2);
+	OutIndices.Add(0); OutIndices.Add(2); OutIndices.Add(3);
+
+	// 2. Top (+Z): 4,5,6,7
+	OutIndices.Add(4); OutIndices.Add(6); OutIndices.Add(5);
+	OutIndices.Add(4); OutIndices.Add(7); OutIndices.Add(6);
+
+	// 3. Front (-Y): 0,1,5,4
+	OutIndices.Add(0); OutIndices.Add(5); OutIndices.Add(1);
+	OutIndices.Add(0); OutIndices.Add(4); OutIndices.Add(5);
+
+	// 4. Back (+Y): 3,7,6,2
+	OutIndices.Add(3); OutIndices.Add(2); OutIndices.Add(6);
+	OutIndices.Add(3); OutIndices.Add(6); OutIndices.Add(7);
+
+	// 5. Left (-X): 0,4,7,3
+	OutIndices.Add(0); OutIndices.Add(7); OutIndices.Add(4);
+	OutIndices.Add(0); OutIndices.Add(3); OutIndices.Add(7);
+
+	// 6. Right (+X): 1,2,6,5
+	OutIndices.Add(1); OutIndices.Add(6); OutIndices.Add(2);
+	OutIndices.Add(1); OutIndices.Add(5); OutIndices.Add(6);
+}
+
 void FVisMeshInstancedSceneProxy::CreateRenderThreadResources()
 {
 	check(VertexFactory == nullptr);
@@ -58,19 +96,19 @@ void FVisMeshInstancedSceneProxy::CreateRenderThreadResources()
 	// 1. 初始化 PositionBuffer (标准几何体)
 	// ========================================================================
 	{
-		PositionBuffer = new FPositionUAVVertexBuffer(GNumVertsPerBox);
+		PositionBuffer = new FPositionUAVVertexBuffer(8);
 		PositionBuffer->InitResource(RHICmdList);
 
 		TArray<FVector3f> UnitCubeVerts;
 		GetUnitCubeVertices(UnitCubeVerts);
 
-		check(UnitCubeVerts.Num() == GNumVertsPerBox);
+		check(UnitCubeVerts.Num() == 8);
 
 		// 锁定 Buffer 进行写入
 		void* BufferData = RHICmdList.LockBuffer(
 			PositionBuffer->VertexBufferRHI, 
 			0, 
-			GNumVertsPerBox * sizeof(FVector3f), 
+			8 * sizeof(FVector3f), 
 			RLM_WriteOnly
 		);
         
@@ -79,6 +117,14 @@ void FVisMeshInstancedSceneProxy::CreateRenderThreadResources()
         
 		// 解锁
 		RHICmdList.UnlockBuffer(PositionBuffer->VertexBufferRHI);
+	}
+
+	{
+		TArray<uint32> Indices;
+		GetUnitCubeIndices(Indices);  // 获取36个索引
+        
+		IndexBuffer = new FVisMeshIndexBuffer(Indices);
+		IndexBuffer->InitResource(RHICmdList);  // 关键：调用 InitResource
 	}
 
 	InstanceBuffer = new FVisMeshInstanceBuffer(NumInstances);
@@ -115,12 +161,12 @@ void FVisMeshInstancedSceneProxy::CreateRenderThreadResources()
 	
 	// 必须包含 DrawIndirect
 
-	const uint32 IndirectSize = sizeof(FRHIDrawIndirectParameters);
+	const uint32 IndirectSize = sizeof(FRHIDrawIndexedIndirectParameters);
 
 	// ========================================================================
     // 1. 定义描述符 (为了告诉 RDG 这是什么类型的资源)
     // ========================================================================
-    const uint32 NumElements = sizeof(FRHIDrawIndirectParameters) / sizeof(uint32);
+    const uint32 NumElements = sizeof(FRHIDrawIndexedIndirectParameters) / sizeof(uint32);
     const uint32 BytesPerElement = sizeof(uint32); // R32_UINT
 
     FRDGBufferDesc IndirectDesc = FRDGBufferDesc::CreateIndirectDesc(NumElements * BytesPerElement);
@@ -180,6 +226,12 @@ void FVisMeshInstancedSceneProxy::DestroyRenderThreadResources()
 		delete VertexFactory;
 		VertexFactory = nullptr;
 	}
+	if (IndexBuffer)
+	{
+		IndexBuffer->ReleaseResource();
+		delete IndexBuffer;
+		IndexBuffer = nullptr;
+	}
 	if (PositionBuffer != nullptr)
 	{
 		PositionBuffer->ReleaseResource();
@@ -215,7 +267,7 @@ void FVisMeshInstancedSceneProxy::GetDynamicMeshElements(const TArray<const FSce
 FMeshBatch* FVisMeshInstancedSceneProxy::CreateMeshBatch(class FMeshElementCollector& Collector) const
 {
 	// 检查所有资源是否有效
-	if (!Material || !VertexFactory || !PositionBuffer || !IndirectArgsBuffer || !InstanceBuffer)
+	if (!Material || !VertexFactory || !PositionBuffer || !IndirectArgsBuffer || !InstanceBuffer || !IndexBuffer)
 	{
 		return nullptr;
 	}
@@ -235,6 +287,17 @@ FMeshBatch* FVisMeshInstancedSceneProxy::CreateMeshBatch(class FMeshElementColle
 	FMeshBatchElement& MeshBatchElement = MeshBatch.Elements[0];
 	MeshBatch.VertexFactory = VertexFactory;
 	MeshBatch.MaterialRenderProxy = MaterialRenderProxy;
+	MeshBatch.Type = PT_TriangleList;
+
+	MeshBatchElement.IndexBuffer = IndexBuffer;
+	MeshBatchElement.FirstIndex = 0;
+	MeshBatchElement.NumPrimitives = 12;  // 36 indices / 3 = 12 triangles
+	MeshBatchElement.MinVertexIndex = 0;
+	MeshBatchElement.MaxVertexIndex = 7;
+
+	MeshBatchElement.NumInstances = 1;  // 需要设置一个非零值
+	MeshBatchElement.BaseVertexIndex = 0;
+	MeshBatchElement.UserIndex = 0;  // InstanceOffset
 
 	MeshBatchElement.NumPrimitives = 0;
 	MeshBatchElement.IndirectArgsBuffer = IndirectArgsBuffer->GetRHI();
@@ -273,7 +336,6 @@ void FVisMeshInstancedSceneProxy::DispatchComputePass_RenderThread(FRDGBuilder& 
 		}
 		FMatrix44f ViewProjectionMatrix = FMatrix44f(ViewProjMatrix.GetTransposed());
 		FMatrix44f ModelMatrix = FMatrix44f(GetLocalToWorld());
-		AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(IndirectArgsRDG),0);
 		// 调用具体的 Pass 添加函数 (这个函数可以是静态的，或者 VisMeshUtils 里的)
 		AddBoxChartFrustumCulledInstancePass(GraphBuilder,
 									InstanceBuffer->GetOriginUAV(),

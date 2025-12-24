@@ -102,9 +102,9 @@ struct FVertexFactoryInput
 
 #if (USE_INSTANCING || USE_INSTANCE_CULLING) && !MANUAL_VERTEX_FETCH && (VF_USE_PRIMITIVE_SCENE_DATA != 2)
 	float4 InstanceOrigin : ATTRIBUTE8;  // per-instance random in w 
-	half4 InstanceTransform1 : ATTRIBUTE9;  // hitproxy.r + 256 * selected in .w
-	half4 InstanceTransform2 : ATTRIBUTE10; // hitproxy.g in .w
-	half4 InstanceTransform3 : ATTRIBUTE11; // hitproxy.b in .w
+	float4 InstanceTransform1 : ATTRIBUTE9;  // hitproxy.r + 256 * selected in .w
+	float4 InstanceTransform2 : ATTRIBUTE10; // hitproxy.g in .w
+	float4 InstanceTransform3 : ATTRIBUTE11; // hitproxy.b in .w
 	float4 InstanceLightMapAndShadowMapUVBias : ATTRIBUTE12; 
 #endif //USE_INSTANCING
 
@@ -229,9 +229,9 @@ struct FPositionOnlyVertexFactoryInput
 
 #if (USE_INSTANCING || USE_INSTANCE_CULLING) && !MANUAL_VERTEX_FETCH && (VF_USE_PRIMITIVE_SCENE_DATA != 2)
 	float4 InstanceOrigin : ATTRIBUTE8;  // per-instance random in w 
-	half4 InstanceTransform1 : ATTRIBUTE9;  // hitproxy.r + 256 * selected in .w
-	half4 InstanceTransform2 : ATTRIBUTE10; // hitproxy.g in .w
-	half4 InstanceTransform3 : ATTRIBUTE11; // hitproxy.b in .w
+	float4 InstanceTransform1 : ATTRIBUTE9;  // hitproxy.r + 256 * selected in .w
+	float4 InstanceTransform2 : ATTRIBUTE10; // hitproxy.g in .w
+	float4 InstanceTransform3 : ATTRIBUTE11; // hitproxy.b in .w
 #endif	// USE_INSTANCING
 
 #if USE_INSTANCING
@@ -258,9 +258,9 @@ struct FPositionAndNormalOnlyVertexFactoryInput
 
 #if (USE_INSTANCING || USE_INSTANCE_CULLING) && !MANUAL_VERTEX_FETCH && (VF_USE_PRIMITIVE_SCENE_DATA != 2)
 	float4 InstanceOrigin : ATTRIBUTE8;  // per-instance random in w 
-	half4 InstanceTransform1 : ATTRIBUTE9;  // hitproxy.r + 256 * selected in .w
-	half4 InstanceTransform2 : ATTRIBUTE10; // hitproxy.g in .w
-	half4 InstanceTransform3 : ATTRIBUTE11; // hitproxy.b in .w
+	float4 InstanceTransform1 : ATTRIBUTE9;  // hitproxy.r + 256 * selected in .w
+	float4 InstanceTransform2 : ATTRIBUTE10; // hitproxy.g in .w
+	float4 InstanceTransform3 : ATTRIBUTE11; // hitproxy.b in .w
 #endif	// USE_INSTANCING
 
 #if USE_INSTANCING

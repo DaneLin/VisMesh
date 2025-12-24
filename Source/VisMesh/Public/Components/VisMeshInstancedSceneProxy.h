@@ -1,4 +1,5 @@
 #pragma once
+#include "RenderBase/VisMeshRenderResources.h"
 #include "RenderBase/VisMeshSceneProxyBase.h"
 
 class FVisMeshInstanceBuffer;
@@ -10,6 +11,7 @@ class FVisMeshInstancedSceneProxy final : public FVisMeshSceneProxyBase
 public:
 	FVisMeshInstancedVertexFactory* VertexFactory;
 	FPositionUAVVertexBuffer* PositionBuffer;
+	FVisMeshIndexBuffer* IndexBuffer;
 	TRefCountPtr<FRDGPooledBuffer> IndirectArgsBuffer;
 	FUnorderedAccessViewRHIRef IndirectArgsBufferUAV;
 

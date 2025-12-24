@@ -11,42 +11,53 @@
 
 void GetUnitCubeVertices(TArray<FVector3f>& OutVertices)
 {
-	OutVertices.Empty(36);
+	// OutVertices.Empty(36);
+	//
+	// // 定义 8 个角点 (0到1范围)
+	// FVector3f p0(0, 0, 0);
+	// FVector3f p1(1, 0, 0);
+	// FVector3f p2(1, 1, 0);
+	// FVector3f p3(0, 1, 0);
+	// FVector3f p4(0, 0, 1);
+	// FVector3f p5(1, 0, 1);
+	// FVector3f p6(1, 1, 1);
+	// FVector3f p7(0, 1, 1);
+	//
+	// // 定义6个面，每个面2个三角形，按逆时针(CCW)顺序
+	// // 1. Bottom (-Z)
+	// OutVertices.Add(p0); OutVertices.Add(p2); OutVertices.Add(p1);
+	// OutVertices.Add(p0); OutVertices.Add(p3); OutVertices.Add(p2);
+	//
+	// // 2. Top (+Z)
+	// OutVertices.Add(p4); OutVertices.Add(p5); OutVertices.Add(p6);
+	// OutVertices.Add(p4); OutVertices.Add(p6); OutVertices.Add(p7);
+	//
+	// // 3. Front (-Y)
+	// OutVertices.Add(p0); OutVertices.Add(p1); OutVertices.Add(p5);
+	// OutVertices.Add(p0); OutVertices.Add(p5); OutVertices.Add(p4);
+	//
+	// // 4. Back (+Y)
+	// OutVertices.Add(p3); OutVertices.Add(p6); OutVertices.Add(p2);
+	// OutVertices.Add(p3); OutVertices.Add(p7); OutVertices.Add(p6);
+	//
+	// // 5. Left (-X)
+	// OutVertices.Add(p0); OutVertices.Add(p4); OutVertices.Add(p7);
+	// OutVertices.Add(p0); OutVertices.Add(p7); OutVertices.Add(p3);
+	//
+	// // 6. Right (+X)
+	// OutVertices.Add(p1); OutVertices.Add(p2); OutVertices.Add(p6);
+	// OutVertices.Add(p1); OutVertices.Add(p6); OutVertices.Add(p5);
+	OutVertices.Empty(8);
 
-	// 定义 8 个角点 (0到1范围)
-	FVector3f p0(0, 0, 0);
-	FVector3f p1(1, 0, 0);
-	FVector3f p2(1, 1, 0);
-	FVector3f p3(0, 1, 0);
-	FVector3f p4(0, 0, 1);
-	FVector3f p5(1, 0, 1);
-	FVector3f p6(1, 1, 1);
-	FVector3f p7(0, 1, 1);
-
-	// 定义6个面，每个面2个三角形，按逆时针(CCW)顺序
-	// 1. Bottom (-Z)
-	OutVertices.Add(p0); OutVertices.Add(p2); OutVertices.Add(p1);
-	OutVertices.Add(p0); OutVertices.Add(p3); OutVertices.Add(p2);
-
-	// 2. Top (+Z)
-	OutVertices.Add(p4); OutVertices.Add(p5); OutVertices.Add(p6);
-	OutVertices.Add(p4); OutVertices.Add(p6); OutVertices.Add(p7);
-
-	// 3. Front (-Y)
-	OutVertices.Add(p0); OutVertices.Add(p1); OutVertices.Add(p5);
-	OutVertices.Add(p0); OutVertices.Add(p5); OutVertices.Add(p4);
-
-	// 4. Back (+Y)
-	OutVertices.Add(p3); OutVertices.Add(p6); OutVertices.Add(p2);
-	OutVertices.Add(p3); OutVertices.Add(p7); OutVertices.Add(p6);
-
-	// 5. Left (-X)
-	OutVertices.Add(p0); OutVertices.Add(p4); OutVertices.Add(p7);
-	OutVertices.Add(p0); OutVertices.Add(p7); OutVertices.Add(p3);
-
-	// 6. Right (+X)
-	OutVertices.Add(p1); OutVertices.Add(p2); OutVertices.Add(p6);
-	OutVertices.Add(p1); OutVertices.Add(p6); OutVertices.Add(p5);
+	// 8个角点 (0到1范围)
+	OutVertices.Add(FVector3f(0, 0, 0)); // 0
+	OutVertices.Add(FVector3f(1, 0, 0)); // 1
+	OutVertices.Add(FVector3f(1, 1, 0)); // 2
+	OutVertices.Add(FVector3f(0, 1, 0)); // 3
+	OutVertices.Add(FVector3f(0, 0, 1)); // 4
+	OutVertices.Add(FVector3f(1, 0, 1)); // 5
+	OutVertices.Add(FVector3f(1, 1, 1)); // 6
+	OutVertices.Add(FVector3f(0, 1, 1)); // 7
 }
 
 // --------------------------------------------------------

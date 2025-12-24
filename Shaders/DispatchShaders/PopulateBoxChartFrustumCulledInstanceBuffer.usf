@@ -79,6 +79,15 @@ void MainCS(uint TaskIndex : SV_DispatchThreadID)
 {
 
     if (TaskIndex >= (uint)NumInstances) return;
+
+    if (TaskIndex == 0)
+    {
+        OutIndirectArgs[0] = 36; // IndexCountPerInstance
+        // OutIndirectArgs[1] 由 InterlockedAdd 填充 (InstanceCount)
+        OutIndirectArgs[2] = 0;  // StartIndexLocation
+        OutIndirectArgs[3] = 0;  // BaseVertexLocation
+        OutIndirectArgs[4] = 0;  // StartInstanceLocation 
+    }
     
     uint Row = TaskIndex / NumColumns;
     uint Col = TaskIndex % NumColumns;
@@ -121,14 +130,5 @@ void MainCS(uint TaskIndex : SV_DispatchThreadID)
         OutInstanceTransforms[WriteOffset + 0] = TransformRow0;
         OutInstanceTransforms[WriteOffset + 1] = TransformRow1;
         OutInstanceTransforms[WriteOffset + 2] = TransformRow2;
-    }
-
-    AllMemoryBarrierWithGroupSync();
-
-    if (TaskIndex == 0)
-    {
-        OutIndirectArgs[0] = 36; // IndexCountPerInstance
-        OutIndirectArgs[2] = 0;  // StartIndexLocation
-        OutIndirectArgs[3] = 0;  // BaseVertexLocation
     }
 }
