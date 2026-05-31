@@ -1,6 +1,6 @@
 /*=============================================================================
     PopulateBoxWireframeBuffer_Miter.usf
-    使用斜接算法的柱体边线生成
+    使用斜接算法的柱体边线生成 - 修复版 (Dual-Limit Miter)
 =============================================================================*/
 
 #include "/Engine/Private/Common.ush"
@@ -24,7 +24,11 @@ RWBuffer<uint> OutIndirectArgs;
 #define VERTS_PER_WIRE_BOX 72
 
 /**
- * 屏幕空间等宽的斜接算法（带距离补偿）
+ * 屏幕空间等宽的斜接算法（带距离补偿 + 双重限制抗尖刺）
+ * * 修改说明：
+ * 引入了 "Dual-Limit" 策略。
+ * - OuterLimit (1.5): 严格限制外侧尖角，将过长的"屋顶"切平。
+ * - InnerLimit (5.0): 允许内侧自然延伸，防止连接处断裂或变细。
  */
 bool ComputeMiterWithScreenWidth(
     float3 Prev,
@@ -40,6 +44,7 @@ bool ComputeMiterWithScreenWidth(
 {
     // 1. 计算当前点的距离和宽度补偿
     float DistToCam = length(Current - CameraPos);
+    // 计算屏幕像素对应的世界单位宽度
     float WorldUnitPerPixel = (2.0f * DistToCam * TanHalfFOV) / ViewportSize.y;
     float WorldWidth = TargetPixelWidth * WorldUnitPerPixel;
     
@@ -51,20 +56,21 @@ bool ComputeMiterWithScreenWidth(
     float3 ToCamera = normalize(CameraPos - Current);
     
     // 4. 计算Billboard右向量
+    // 注意：这里的"Right"是相对于视线的，但在3D空间中具体指向"内"还是"外"取决于线段转向
     float3 RightPrev = normalize(cross(ToCamera, DirPrev));
     float3 RightNext = normalize(cross(ToCamera, DirNext));
     
-    // 5. 处理向量退化
+    // 5. 处理向量退化 (线段平行于视线)
     if (length(cross(ToCamera, DirPrev)) < EPSILON)
         RightPrev = float3(1, 0, 0);
     if (length(cross(ToCamera, DirNext)) < EPSILON)
         RightNext = float3(1, 0, 0);
     
-    // 6. 计算斜接向量
+    // 6. 计算斜接向量 (角平分线方向)
     float3 MiterDir = normalize(RightPrev + RightNext);
     float MiterLen = length(RightPrev + RightNext);
     
-    // 7. 退化处理
+    // 7. 退化处理 (直线或180度角)
     if (MiterLen < EPSILON)
     {
         OutLeft = -RightPrev * (WorldWidth * 0.5f);
@@ -72,13 +78,53 @@ bool ComputeMiterWithScreenWidth(
         return true;
     }
     
-    // 8. 计算斜接比例
-    float MiterScale = 1.0f / max(dot(MiterDir, RightPrev), EPSILON);
-    MiterScale = min(MiterScale, MITER_LIMIT);
+    // 8. 计算斜接比例 (核心修复部分)
+    float Denom = dot(MiterDir, RightPrev);
+    float BaseScale = 1.0f / max(Denom, EPSILON);
     
+    // --- 双重限制策略 Start ---
+    
+    // 设置限制阈值
+    // 1.5 是 sqrt(2) 的近似值，对应90度角。任何比90度更尖的视觉角度，其外侧都会被切平。
+    float OuterLimit = 1.5f; 
+    // 5.0 允许内侧有足够的空间进行连接，保证线宽视觉一致性。
+    float InnerLimit = 5.0f; 
+    
+    // 分别计算两种限制下的缩放值
+    float ScaleInner = min(BaseScale, InnerLimit);
+    float ScaleOuter = min(BaseScale, OuterLimit);
+    
+    // 判断转向方向，以确定哪边是内侧，哪边是外侧
+    // 使用叉积判断线段在视平面上的转向
+    float3 TurnNormal = cross(DirPrev, DirNext);
+    // TurnSign > 0 表示一种转向（如左转），< 0 表示相反
+    float TurnSign = dot(TurnNormal, ToCamera);
+    
+    float ScaleLeft, ScaleRight;
+
+    // 根据左右手坐标系和具体的 Cross 定义，这里的逻辑如下：
+    // RightPrev = Cross(ToCamera, DirPrev). 
+    // 当 TurnSign > 0 时，通常意味着"Right"向量指向了弯折的内侧。
+    if (TurnSign > 0)
+    {
+        // 这种情况下，Right 是内侧，Left 是外侧
+        ScaleRight = ScaleInner; // 内侧保持连接
+        ScaleLeft  = ScaleOuter; // 外侧切除尖刺
+    }
+    else
+    {
+        // 反之，Right 是外侧，Left 是内侧
+        ScaleRight = ScaleOuter; // 外侧切除尖刺
+        ScaleLeft  = ScaleInner; // 内侧保持连接
+    }
+    
+    // --- 双重限制策略 End ---
+
     // 9. 输出偏移
-    OutLeft = -MiterDir * (WorldWidth * 0.5f * MiterScale);
-    OutRight = MiterDir * (WorldWidth * 0.5f * MiterScale);
+    // OutLeft 对应 -MiterDir
+    OutLeft = -MiterDir * (WorldWidth * 0.5f * ScaleLeft);
+    // OutRight 对应 +MiterDir
+    OutRight = MiterDir * (WorldWidth * 0.5f * ScaleRight);
     
     return true;
 }

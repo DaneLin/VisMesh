@@ -38,7 +38,7 @@ void AVisBarChart::BeginPlay()
 
 	// 测试数据
 	// --- 1. 生成 100,000 个随机测试数据 ---
-	const int32 NumData = 10000;
+	const int32 NumData = 1000000;
 	TArray<float> TestData;
 	TestData.SetNumUninitialized(NumData);
 
